@@ -1,0 +1,12 @@
+# ML model files
+*.pt
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# DS Store (Mac)
+.DS_Store

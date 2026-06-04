@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AussieEcoLens — Sign In</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --green: #2d6a4f; --green-light: #52b788;
+      --cream: #f8f4ec; --bark: #3d2b1f;
+      --mist: #e8f4f0; --error: #c0392b; --success: #27ae60;
+    }
+    body { min-height: 100vh; background: var(--cream); font-family: 'DM Sans', sans-serif; display: grid; grid-template-columns: 1fr 1fr; }
+    .panel-left { background: var(--green); display: flex; flex-direction: column; justify-content: center; padding: 60px 50px; position: relative; overflow: hidden; }
+    .panel-left::before { content: ''; position: absolute; width: 400px; height: 400px; border-radius: 50%; background: rgba(255,255,255,0.05); bottom: -100px; left: -100px; }
+    .brand { font-family: 'DM Serif Display', serif; font-size: 2.4rem; color: #fff; line-height: 1.1; margin-bottom: 16px; }
+    .brand span { color: var(--green-light); }
+    .tagline { color: rgba(255,255,255,0.7); font-size: 1rem; line-height: 1.6; max-width: 320px; margin-bottom: 48px; }
+    .features { list-style: none; }
+    .features li { color: rgba(255,255,255,0.85); font-size: 0.9rem; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 12px; }
+    .features li::before { content: '✦'; color: var(--green-light); font-size: 0.7rem; }
+    .panel-right { display: flex; flex-direction: column; justify-content: center; padding: 60px 50px; }
+    h2 { font-family: 'DM Serif Display', serif; font-size: 2rem; color: var(--bark); margin-bottom: 8px; }
+    .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 36px; }
+    .subtitle a { color: var(--green); text-decoration: none; font-weight: 500; }
+    .field { margin-bottom: 20px; }
+    .field label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--bark); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .field input { width: 100%; padding: 12px 16px; border: 1.5px solid #ddd; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 0.95rem; color: var(--bark); background: #fff; transition: border-color 0.2s; outline: none; }
+    .field input:focus { border-color: var(--green); }
+    .btn { width: 100%; padding: 14px; background: var(--green); color: #fff; border: none; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .btn:hover { background: #235c42; }
+    .btn:disabled { background: #aaa; cursor: not-allowed; }
+    .message { padding: 12px 16px; border-radius: 8px; font-size: 0.9rem; margin-bottom: 16px; display: none; }
+    .message.error { background: #fdecea; color: var(--error); border: 1px solid #f5c6c2; display: block; }
+    .message.success { background: #eafaf1; color: var(--success); border: 1px solid #a9dfbf; display: block; }
+  </style>
+</head>
+<body>
+
+<div class="panel-left">
+  <div class="brand">Aussie<span>EcoLens</span></div>
+  <p class="tagline">Welcome back. Sign in to continue observing and tagging Australia's wildlife.</p>
+  <ul class="features">
+    <li>Upload images &amp; videos of wildlife</li>
+    <li>Automatic species detection via ML</li>
+    <li>Search by species, tags, or thumbnail</li>
+    <li>Receive tag-based email notifications</li>
+  </ul>
+</div>
+
+<div class="panel-right">
+  <h2>Welcome back</h2>
+  <p class="subtitle">Don't have an account? <a href="signup.html">Sign up</a></p>
+
+  <div id="msg" class="message"></div>
+
+  <div class="field">
+    <label>Email Address</label>
+    <input type="email" id="email" placeholder="jane@example.com" />
+  </div>
+  <div class="field">
+    <label>Password</label>
+    <input type="password" id="password" placeholder="Your password" />
+  </div>
+
+  <button class="btn" id="login-btn">Sign In</button>
+</div>
+
+<script>
+  const CLIENT_ID = 'ueh2ft2l8ap6ccrmk5tcjfsua';
+  const REGION    = 'ap-southeast-2';
+  const ENDPOINT  = 'https://cognito-idp.' + REGION + '.amazonaws.com/';
+
+  function showMsg(text, type) {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.className = 'message ' + type;
+  }
+
+  async function cognitoRequest(action, body) {
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-amz-json-1.1',
+        'X-Amz-Target': 'AWSCognitoIdentityProviderService.' + action
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.__type || 'Request failed');
+    return data;
+  }
+
+  async function doLogin() {
+    const email    = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+
+    if (!email || !password) {
+      showMsg('Please enter your email and password.', 'error'); return;
+    }
+
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+
+    try {
+      const data = await cognitoRequest('InitiateAuth', {
+        AuthFlow: 'USER_PASSWORD_AUTH',
+        ClientId: CLIENT_ID,
+        AuthParameters: {
+          USERNAME: email,
+          PASSWORD: password
+        }
+      });
+
+      const idToken     = data.AuthenticationResult.IdToken;
+      const accessToken = data.AuthenticationResult.AccessToken;
+
+      sessionStorage.setItem('ecolens_id_token', idToken);
+      sessionStorage.setItem('ecolens_access_token', accessToken);
+      sessionStorage.setItem('ecolens_email', email);
+
+      showMsg('✅ Signed in! Redirecting…', 'success');
+      setTimeout(() => window.location.href = 'index.html', 1500);
+
+    } catch (err) {
+      showMsg(err.message, 'error');
+      btn.disabled = false; btn.textContent = 'Sign In';
+    }
+  }
+
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doLogin();
+  });
+</script>
+
+</body>
+</html>
