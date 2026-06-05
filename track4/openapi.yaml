@@ -1,0 +1,439 @@
+openapi: 3.0.3
+info:
+  title: Aussie EcoLens — Query & Notification APIs
+  description: >
+    Track 4 endpoints for querying wildlife media files, managing tags,
+    deleting files, and subscribing to tag-based email notifications.
+    All endpoints require a valid AWS Cognito JWT in the Authorization header.
+  version: 1.0.0
+
+servers:
+  - url: https://{apiGatewayId}.execute-api.{region}.amazonaws.com/{stage}
+    variables:
+      apiGatewayId:
+        default: your-api-id
+      region:
+        default: ap-southeast-2
+      stage:
+        default: prod
+
+components:
+  securitySchemes:
+    CognitoAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: AWS Cognito ID token obtained after login.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Invalid request body"
+
+    TagCountQuery:
+      type: object
+      description: >
+        A map of species name to minimum required count.
+        All conditions are ANDed — a file must satisfy every tag condition.
+      additionalProperties:
+        type: integer
+        minimum: 1
+      example:
+        koala: 3
+        wombat: 2
+
+    FileURLList:
+      type: object
+      properties:
+        thumbnails:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Thumbnail URLs for matching images.
+        videos:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Full URLs for matching videos.
+      example:
+        thumbnails:
+          - "https://s3.amazonaws.com/bucket/thumbs/abc123.jpg"
+        videos:
+          - "https://s3.amazonaws.com/bucket/uploads/def456.mp4"
+
+security:
+  - CognitoAuth: []
+
+paths:
+
+  # ─────────────────────────────────────────────
+  # 1. Find by tags (counts + species), logical AND
+  # ─────────────────────────────────────────────
+  /query/tags:
+    post:
+      summary: Find files by tag counts (logical AND)
+      description: >
+        Returns thumbnail URLs (images) and full URLs (videos) for all files
+        where every requested tag appears at least the specified number of times.
+        Omitting a count value (or setting it to 1) queries by species presence only.
+      operationId: queryByTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCountQuery'
+            examples:
+              species_only:
+                summary: Find any file containing a dingo
+                value:
+                  dingo: 1
+              with_counts:
+                summary: Files with >=3 koalas AND >=2 wombats
+                value:
+                  koala: 3
+                  wombat: 2
+      responses:
+        '200':
+          description: Matching file URLs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileURLList'
+        '400':
+          description: Bad request (empty body, non-integer counts, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised — missing or invalid Cognito token
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 2. Find full URL from thumbnail URL
+  # ─────────────────────────────────────────────
+  /query/thumbnail:
+    get:
+      summary: Resolve thumbnail URL to full-size image URL
+      operationId: queryByThumbnail
+      parameters:
+        - name: thumbnail_url
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: The URL of the thumbnail to look up.
+          example: "https://s3.amazonaws.com/bucket/thumbs/abc123.jpg"
+      responses:
+        '200':
+          description: Full-size image URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  full_url:
+                    type: string
+                    format: uri
+                    example: "https://s3.amazonaws.com/bucket/uploads/abc123.jpg"
+        '400':
+          description: Missing or malformed thumbnail_url parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Thumbnail URL not found in database
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 3. Find by uploaded file (transient — NOT stored)
+  # ─────────────────────────────────────────────
+  /query/file:
+    post:
+      summary: Find matching files by uploading a query file (not stored)
+      description: >
+        Accepts an image or video file, runs the ML model to detect species,
+        then queries the database for all stored files containing that same set of tags.
+        The uploaded file is processed in memory and is NEVER saved to S3 or the database.
+      operationId: queryByFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Image (jpg/png) or video (mp4) file to use as query input.
+      responses:
+        '200':
+          description: Files in the database that match the detected tags
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/FileURLList'
+                  - type: object
+                    properties:
+                      detected_tags:
+                        type: array
+                        items:
+                          type: string
+                        description: Tags detected in the uploaded query file.
+                        example: ["koala", "eucalyptus"]
+        '400':
+          description: Missing file, unsupported file type, or file too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 4. Bulk tag add / remove
+  # ─────────────────────────────────────────────
+  /tags/bulk:
+    post:
+      summary: Add or remove tags from multiple files
+      description: >
+        Adds (operation=1) or removes (operation=0) the specified tags from all
+        files identified by the provided URLs. If a tag to be removed does not
+        exist on a file, it is silently ignored.
+      operationId: bulkTagUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - urls
+                - tags
+                - operation
+              properties:
+                urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  minItems: 1
+                  description: List of file URLs to update.
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  minItems: 1
+                  description: Tags to add or remove.
+                operation:
+                  type: integer
+                  enum: [0, 1]
+                  description: "1 = add tags, 0 = remove tags"
+            examples:
+              add_tags:
+                summary: Add 'echidna' tag to two files
+                value:
+                  urls:
+                    - "https://s3.amazonaws.com/bucket/uploads/abc123.jpg"
+                    - "https://s3.amazonaws.com/bucket/uploads/def456.mp4"
+                  tags: ["echidna"]
+                  operation: 1
+              remove_tags:
+                summary: Remove 'dingo' from one file
+                value:
+                  urls:
+                    - "https://s3.amazonaws.com/bucket/uploads/abc123.jpg"
+                  tags: ["dingo"]
+                  operation: 0
+      responses:
+        '200':
+          description: Tags updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+                    description: Number of files successfully updated.
+                  skipped:
+                    type: array
+                    items:
+                      type: string
+                    description: URLs that were not found in the database.
+        '400':
+          description: Invalid operation value, empty urls/tags, or malformed body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 5. Delete files (DB side — co-owned with storage track)
+  # ─────────────────────────────────────────────
+  /files:
+    delete:
+      summary: Delete files from storage and database
+      description: >
+        Removes the specified files and their thumbnails from S3 (storage track)
+        and deletes all corresponding database records (Track 4 responsibility).
+        Both tracks must coordinate on this endpoint.
+      operationId: deleteFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - urls
+              properties:
+                urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  minItems: 1
+                  description: Full S3 URLs of files to delete.
+            example:
+              urls:
+                - "https://s3.amazonaws.com/bucket/uploads/abc123.jpg"
+                - "https://s3.amazonaws.com/bucket/uploads/def456.mp4"
+      responses:
+        '200':
+          description: Files deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+                  not_found:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Empty URL list or malformed body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 6a. Subscribe to tag-based notifications
+  # ─────────────────────────────────────────────
+  /notifications/subscribe:
+    post:
+      summary: Subscribe an email address to notifications for a specific tag
+      description: >
+        Subscribes the given email to an SNS topic for the specified tag.
+        AWS will send a confirmation email — the user must click it to activate.
+      operationId: subscribeToTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - tag
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "akshaya@example.com"
+                tag:
+                  type: string
+                  example: "quokka"
+      responses:
+        '200':
+          description: Subscription initiated — confirmation email sent by AWS SNS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Confirmation email sent to akshaya@example.com for tag: quokka"
+                  subscription_arn:
+                    type: string
+                    example: "pending confirmation"
+        '400':
+          description: Missing or invalid email/tag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
+
+  # ─────────────────────────────────────────────
+  # 6b. Unsubscribe from tag notifications
+  # ─────────────────────────────────────────────
+  /notifications/unsubscribe:
+    post:
+      summary: Unsubscribe an email from a tag notification
+      operationId: unsubscribeFromTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - tag
+              properties:
+                email:
+                  type: string
+                  format: email
+                tag:
+                  type: string
+      responses:
+        '200':
+          description: Unsubscribed successfully
+        '404':
+          description: Subscription not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorised
+        '500':
+          description: Internal server error
