@@ -21,8 +21,8 @@ def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
 
     # 1. TEMPORARY DEV AUTH BYPASS
 # Replace this with real Cognito auth once Track 2 is ready.
-        token_owner_sub = "test-user-123"
-        owner_email = "test@example.com"
+#token_owner_sub = "test-user-123"
+#       owner_email = "test@example.com"
         # 2. Read Track 1 upload event
         event = req.get_json()
 
