@@ -30,6 +30,8 @@ import json
 import os
 import io
 import logging
+import subprocess
+import sys
 import boto3
 from azure.cosmos import CosmosClient, exceptions as CosmosExceptions
 
@@ -37,10 +39,33 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # ─────────────────────────────────────────────────────────────
+# Install torch at cold start if not available
+# Only used by /query/file — all other endpoints skip this
+# ─────────────────────────────────────────────────────────────
+
+def ensure_torch():
+    try:
+        import torch
+        logger.info("torch already available.")
+        return
+    except ImportError:
+        pass
+    logger.info("Installing torch into /tmp/pypackages (cold start)...")
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "torch", "torchvision",
+        "--target", "/tmp/pypackages",
+        "--quiet", "--no-cache-dir",
+        "--index-url", "https://download.pytorch.org/whl/cpu"
+    ])
+    sys.path.insert(0, "/tmp/pypackages")
+    logger.info("torch installed successfully.")
+
+# ─────────────────────────────────────────────────────────────
 # Clients (initialised once per Lambda container — stays warm)
 # ─────────────────────────────────────────────────────────────
 
-sns_client = boto3.client("sns", region_name=os.environ.get("AWS_REGION", "ap-southeast-2"))
+sns_client = boto3.client("sns")
 
 def get_cosmos_container():
     """Returns the Cosmos DB container client. Called lazily so cold start is faster."""
@@ -84,61 +109,74 @@ def parse_body(event):
 def db_query_by_tags(tag_counts: dict) -> list:
     """
     Find all files where every requested tag meets the minimum count.
-    Uses the 'tags' field (dict with counts) for AND logic.
-
-    e.g. tag_counts = {"kangaroo": 2, "wombat": 1}
-    returns files where tags.kangaroo >= 2 AND tags.wombat >= 1
+    Fetches all tagged files then filters in Python — works around
+    Cosmos DB SQL limitations with dynamic keys in nested objects.
     """
     container = get_cosmos_container()
 
-    # Build WHERE clauses — one condition per tag
-    conditions = " AND ".join(
-        [f"c.tags.{tag} >= {count}" for tag, count in tag_counts.items()]
+    # First get all tagged files that contain ALL the requested species
+    # Use ARRAY_CONTAINS on tag_list for initial filtering (fast index scan)
+    species_conditions = " AND ".join(
+        [f"ARRAY_CONTAINS(c.tag_list, @tag{i})"
+         for i, tag in enumerate(tag_counts.keys())]
     )
-    query = f"SELECT * FROM c WHERE c.status = 'tagged' AND {conditions}"
+    query = f"SELECT * FROM c WHERE c.status = 'tagged' AND {species_conditions}"
+    params = [{"name": f"@tag{i}", "value": tag}
+              for i, tag in enumerate(tag_counts.keys())]
 
-    logger.info(f"Cosmos query: {query}")
-    items = list(container.query_items(query=query, enable_cross_partition_query=True))
-    return items
+    logger.info(f"Cosmos query: {query} | params: {params}")
+    items = list(container.query_items(
+        query=query,
+        parameters=params,
+        enable_cross_partition_query=True
+    ))
+
+    # Then filter in Python for count requirements
+    results = []
+    for item in items:
+        item_tags = item.get("tags", {})
+        if all(item_tags.get(tag, 0) >= count for tag, count in tag_counts.items()):
+            results.append(item)
+    return results
 
 
 def db_query_by_species(species_list: list) -> list:
     """
-    Find all files containing at least one of the listed species.
-    Uses tag_list (array field) for simple species presence check.
+    Find all files containing all listed species (AND logic).
+    Uses tag_list array field with parameterized queries.
     """
     container = get_cosmos_container()
-
-    # ARRAY_CONTAINS checks if tag_list includes the species
     conditions = " AND ".join(
-        [f"ARRAY_CONTAINS(c.tag_list, '{s}')" for s in species_list]
+        [f"ARRAY_CONTAINS(c.tag_list, @sp{i})" for i, _ in enumerate(species_list)]
     )
     query = f"SELECT * FROM c WHERE c.status = 'tagged' AND {conditions}"
-
-    items = list(container.query_items(query=query, enable_cross_partition_query=True))
+    params = [{"name": f"@sp{i}", "value": s} for i, s in enumerate(species_list)]
+    items = list(container.query_items(
+        query=query, parameters=params, enable_cross_partition_query=True
+    ))
     return items
 
 
 def db_get_by_thumbnail_url(thumbnail_url: str):
-    """Look up a record by its thumbnail_url field."""
+    """Look up a record by its thumbnail_url field, return s3_url."""
     container = get_cosmos_container()
-    query = "SELECT * FROM c WHERE c.thumbnail_url = @url"
+    query = "SELECT c.s3_url, c.thumbnail_url, c.file_id, c.owner_sub, c.media_type FROM c WHERE c.thumbnail_url = @url"
     params = [{"name": "@url", "value": thumbnail_url}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
     return items[0] if items else None
 
 
-def db_update_tags(original_url: str, tags: list, operation: int) -> bool:
+def db_update_tags(s3_url: str, tags: list, operation: int) -> bool:
     """
     Add (operation=1) or remove (operation=0) tags from a record.
     Keeps both 'tags' (dict with counts) and 'tag_list' (array) in sync.
-    Returns True if record was found and updated.
+    Partition key is owner_sub — must fetch full record first.
+    Returns True if record found and updated.
     """
     container = get_cosmos_container()
 
-    # Find the record by original_url
-    query = "SELECT * FROM c WHERE c.original_url = @url"
-    params = [{"name": "@url", "value": original_url}]
+    query = "SELECT * FROM c WHERE c.s3_url = @url"
+    params = [{"name": "@url", "value": s3_url}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
 
     if not items:
@@ -149,13 +187,11 @@ def db_update_tags(original_url: str, tags: list, operation: int) -> bool:
     current_tag_list = record.get("tag_list", [])
 
     if operation == 1:
-        # ADD: increment count if exists, set to 1 if new
         for tag in tags:
             current_tags[tag] = current_tags.get(tag, 0) + 1
             if tag not in current_tag_list:
                 current_tag_list.append(tag)
     else:
-        # REMOVE: decrement count, remove from tag_list if count hits 0
         for tag in tags:
             if tag in current_tags:
                 current_tags[tag] -= 1
@@ -163,32 +199,30 @@ def db_update_tags(original_url: str, tags: list, operation: int) -> bool:
                     del current_tags[tag]
                     if tag in current_tag_list:
                         current_tag_list.remove(tag)
-            # silently ignore tags not present
 
     record["tags"] = current_tags
     record["tag_list"] = current_tag_list
-
-    # Upsert the updated record back
     container.upsert_item(record)
     return True
 
 
-def db_delete_record(original_url: str) -> bool:
+def db_delete_record(s3_url: str) -> bool:
     """
-    Delete the Cosmos DB record for this file URL.
+    Delete the Cosmos DB record by s3_url.
+    Partition key is owner_sub — must be passed to delete_item.
     Returns True if found and deleted.
     """
     container = get_cosmos_container()
 
-    query = "SELECT * FROM c WHERE c.original_url = @url"
-    params = [{"name": "@url", "value": original_url}]
+    query = "SELECT c.id, c.file_id, c.owner_sub FROM c WHERE c.s3_url = @url"
+    params = [{"name": "@url", "value": s3_url}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
 
     if not items:
         return False
 
     record = items[0]
-    container.delete_item(item=record["id"], partition_key=record["file_id"])
+    container.delete_item(item=record["id"], partition_key=record["owner_sub"])
     return True
 
 
@@ -196,8 +230,7 @@ def db_delete_record(original_url: str) -> bool:
 # ML MODEL — PyTorch
 # ─────────────────────────────────────────────────────────────
 
-# ML inference is handled by ml_inference.py — matches batch.py pipeline exactly
-from ml_inference import run_ml_model_on_file
+# ml_inference is imported lazily inside query_by_file only
 
 
 # ─────────────────────────────────────────────────────────────
@@ -259,8 +292,8 @@ def query_by_tags(event, context):
         logger.error(f"Cosmos error in query_by_tags: {e}")
         return err("Database error", 500)
 
-    thumbnails = [r["thumbnail_url"] for r in matches if r.get("file_type") == "image" and r.get("thumbnail_url")]
-    videos = [r["original_url"] for r in matches if r.get("file_type") == "video"]
+    thumbnails = [r["thumbnail_url"] for r in matches if r.get("media_type") == "image" and r.get("thumbnail_url")]
+    videos = [r["s3_url"] for r in matches if r.get("media_type") == "video"]
 
     return ok({"thumbnails": thumbnails, "videos": videos})
 
@@ -286,7 +319,7 @@ def query_by_thumbnail(event, context):
     if not record:
         return err("Thumbnail URL not found", 404)
 
-    return ok({"full_url": record["original_url"]})
+    return ok({"full_url": record["s3_url"]})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -296,6 +329,7 @@ def query_by_thumbnail(event, context):
 
 def query_by_file(event, context):
     import base64
+    ensure_torch()  # install torch if not present
 
     body = event.get("body", "")
     is_base64 = event.get("isBase64Encoded", False)
@@ -329,8 +363,8 @@ def query_by_file(event, context):
         logger.error(f"Cosmos error in query_by_file: {e}")
         return err("Database error", 500)
 
-    thumbnails = [r["thumbnail_url"] for r in matches if r.get("file_type") == "image" and r.get("thumbnail_url")]
-    videos = [r["original_url"] for r in matches if r.get("file_type") == "video"]
+    thumbnails = [r["thumbnail_url"] for r in matches if r.get("media_type") == "image" and r.get("thumbnail_url")]
+    videos = [r["s3_url"] for r in matches if r.get("media_type") == "video"]
 
     return ok({
         "detected_tags": list(detected_tags.keys()),
