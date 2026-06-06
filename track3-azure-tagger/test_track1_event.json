@@ -1,0 +1,14 @@
+{
+  "file_id": "test-img-001",
+  "owner_sub": "test-user-123",
+  "s3_bucket": "ecolens-raw",
+  "s3_key": "uploads/test-user-123/test-img-001.jpg",
+  "s3_url": "https://ecolens-raw.s3.amazonaws.com/uploads/test-user-123/test-img-001.jpg",
+  "thumbnail_bucket": "ecolens-thumbs",
+  "thumbnail_key": "thumbs/test-user-123/test-img-001.jpg",
+  "thumbnail_url": "https://ecolens-thumbs.s3.amazonaws.com/thumbs/test-user-123/test-img-001.jpg",
+  "media_type": "image",
+  "checksum_sha256": "abc123fakechecksum",
+  "frames": [],
+  "uploaded_at": "2026-06-04T10:30:00Z"
+}

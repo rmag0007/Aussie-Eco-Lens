@@ -1,0 +1,4 @@
+azure-functions
+azure-cosmos
+python-jose[cryptography]
+requests
