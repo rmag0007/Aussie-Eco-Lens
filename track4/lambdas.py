@@ -127,13 +127,31 @@ def err(message, status=400):
     }
 
 def parse_body(event):
+    """
+    Parse JSON body from API Gateway event.
+    Handles base64-encoded bodies (happens when binary media types are configured).
+    Always tries base64 decode first if JSON parse fails.
+    """
+    import base64 as _b64
     try:
         body = event.get("body") or "{}"
-        # API Gateway may base64-encode body when binary media types are configured
-        if event.get("isBase64Encoded") and isinstance(body, str):
-            import base64
-            body = base64.b64decode(body).decode("utf-8")
-        return json.loads(body)
+        if not body:
+            return {}
+
+        # Try direct JSON parse first
+        try:
+            return json.loads(body)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Try base64 decode then JSON parse
+        try:
+            decoded = _b64.b64decode(body).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            pass
+
+        return None
     except Exception:
         return None
 
@@ -535,11 +553,13 @@ def query_by_thumbnail(event, context):
     try:
         record = db_get_by_thumbnail_key(thumbnail_key)
     except Exception as e:
+        import traceback
         logger.error(f"Cosmos error in query_by_thumbnail: {e}")
-        return err("Database error", 500)
+        logger.error(traceback.format_exc())
+        return err(f"Database error: {str(e)}", 500)
 
     if not record:
-        return err("Thumbnail not found", 404)
+        return err(f"Thumbnail key not found: {thumbnail_key}", 404)
 
     record = presign_record(record)
     return ok({
@@ -624,7 +644,7 @@ def bulk_tag_update(event, context):
     if body is None:
         return err("Invalid JSON body")
 
-    urls = body.get("urls")
+    urls = body.get("urls") or body.get("file_ids")
     tags = body.get("tags")
     operation = body.get("operation")
 
@@ -646,7 +666,9 @@ def bulk_tag_update(event, context):
             else:
                 skipped.append(url)
         except Exception as e:
+            import traceback
             logger.error(f"Cosmos error updating {url}: {e}")
+            logger.error(traceback.format_exc())
             skipped.append(url)
 
     return ok({"updated": updated, "skipped": skipped})
@@ -846,9 +868,31 @@ ROUTES = {
 }
 
 def handler(event, context):
-    method = event.get("httpMethod", "")
-    path = event.get("path", "")
+    # Try multiple ways to get method and path — API Gateway v1 vs v2 differences
+    method = (
+        event.get("httpMethod") or
+        event.get("requestContext", {}).get("http", {}).get("method") or
+        ""
+    ).upper()
+
+    path = (
+        event.get("path") or
+        event.get("rawPath") or
+        event.get("requestContext", {}).get("path") or
+        ""
+    )
+
+    # Strip stage prefix if present (e.g. /prod/query/tags -> /query/tags)
+    for stage in ["/prod", "/dev", "/staging"]:
+        if path.startswith(stage + "/") or path == stage:
+            path = path[len(stage):] or "/"
+            break
+
+    logger.info(f"Routing: {method} {path}")
+
     route = ROUTES.get((method, path))
     if route is None:
+        # Log full event for debugging
+        logger.error(f"No route for {method} {path}. Event keys: {list(event.keys())}")
         return err(f"No route for {method} {path}", 404)
     return route(event, context)
