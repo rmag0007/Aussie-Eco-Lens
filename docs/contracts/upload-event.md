@@ -3,6 +3,21 @@
 When a new file lands in `ecolens-raw`, Track 1's `ingest-trigger` Lambda
 emits this JSON. Track 3's tagging function consumes it.
 
+## Access note (private buckets)
+All S3 buckets are private (`BlockPublicAccess: true`). To let Track 3's Azure
+Function read objects without AWS credentials, `s3_url` (and each `frames[].s3_url`
+once video extraction is added) is a **presigned GET URL valid for 1 hour**.
+
+Track 3 does a plain HTTPS GET:
+```python
+resp = requests.get(s3_url, timeout=30)
+img_bytes = resp.content
+```
+
+For long-term DB storage, persist `s3_bucket + s3_key` (not the presigned URL,
+which expires). Track 4 generates fresh presigned URLs on demand when serving
+query responses.
+
 ## Schema
 ```json
 {
