@@ -13,16 +13,15 @@ app = func.FunctionApp()
 @app.route(route="tag-upload", methods=["POST"])
 def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        # 1. Verify Cognito ID token from Authorization header
-        user = get_user_from_request(req.headers)
-
-        token_owner_sub = user["sub"]
-        owner_email = user.get("email")
-
-    # 1. TEMPORARY DEV AUTH BYPASS
-# Replace this with real Cognito auth once Track 2 is ready.
-#token_owner_sub = "test-user-123"
-#       owner_email = "test@example.com"
+        # TEMPORARY DEV AUTH BYPASS
+        # Used only while Track 2 Cognito integration is pending.
+        # Before final integration, replace this with:
+        # user = get_user_from_request(req.headers)
+        # token_owner_sub = user["sub"]
+        # owner_email = user.get("email")
+        token_owner_sub = "test-user-123"
+        owner_email = "test@example.com"
+        
         # 2. Read Track 1 upload event
         event = req.get_json()
 
