@@ -82,19 +82,14 @@ def load_classifier():
 # ─── MegaDetector ────────────────────────────────────────────
 
 def run_megadetector(image_path):
-    from megadetector.detection import run_detector_batch
-    _download_if_missing(
-        os.environ["MODEL_BUCKET"],
-        os.environ["DETECTOR_KEY"],
-        DETECTOR_LOCAL,
-    )
-    results = run_detector_batch.load_and_run_detector_batch(
-        image_file_names=[image_path],
-        model_file=DETECTOR_LOCAL,
-    )
-    if not results:
-        return []
-    return results[0].get("detections", [])
+    """
+    Returns a single synthetic detection covering the whole image.
+    MegaDetector (mdv5a.pt) requires the megadetector package which
+    is too large for a Lambda layer. For the query-by-file endpoint
+    we run the classifier directly on the full image instead.
+    The full MegaDetector pipeline runs in the tagging Lambda (Track 1/2).
+    """
+    return [{"category": "1", "conf": 1.0, "bbox": [0, 0, 1, 1]}]
 
 # ─── Crop detections ─────────────────────────────────────────
 
@@ -109,13 +104,20 @@ def crop_detections(image_path, detections):
         if det.get("conf", 0) < CONF_THRESH:
             continue
         x, y, w, h = det["bbox"]
-        crop = img.crop((int(x*W), int(y*H), int((x+w)*W), int((y+h)*H)))
+        left   = max(0, int(x * W))
+        top    = max(0, int(y * H))
+        right  = min(W, int((x + w) * W))
+        bottom = min(H, int((y + h) * H))
+        crop = img.crop((left, top, right, bottom))
         crops.append(crop.resize((SNIP_SIZE, SNIP_SIZE), PILImage.BILINEAR))
     return crops
 
 # ─── Classify one crop ───────────────────────────────────────
 
 def classify_crop(crop):
+    import sys
+    if "/tmp/pypackages" not in sys.path:
+        sys.path.insert(0, "/tmp/pypackages")
     import torch
     import torchvision.transforms as transforms
     import numpy as np

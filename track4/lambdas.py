@@ -50,16 +50,47 @@ def ensure_torch():
         return
     except ImportError:
         pass
-    logger.info("Installing torch into /tmp/pypackages (cold start)...")
+    logger.info("Installing torch + onnx2torch into /tmp/pypackages (cold start)...")
+    # Step 1: install torch CPU (smallest version)
     subprocess.check_call([
         sys.executable, "-m", "pip", "install",
-        "torch", "torchvision",
+        "torch==2.2.0+cpu", "torchvision==0.17.0+cpu",
         "--target", "/tmp/pypackages",
         "--quiet", "--no-cache-dir",
         "--index-url", "https://download.pytorch.org/whl/cpu"
     ])
+    # Remove only CUDA libs — Lambda runs on CPU only
+    import glob
+    cuda_patterns = [
+        "/tmp/pypackages/torch/lib/libcudnn*",
+        "/tmp/pypackages/torch/lib/libcublas*",
+        "/tmp/pypackages/torch/lib/libcurand*",
+        "/tmp/pypackages/torch/lib/libcufft*",
+        "/tmp/pypackages/torch/lib/libcusolver*",
+        "/tmp/pypackages/torch/lib/libcusparse*",
+        "/tmp/pypackages/torch/lib/libnccl*",
+        "/tmp/pypackages/torch/lib/libnvrtc*",
+    ]
+    for pattern in cuda_patterns:
+        for path in glob.glob(pattern):
+            try:
+                os.remove(path)
+                logger.info(f"Removed {path}")
+            except:
+                pass
+    # Step 2: install onnx, onnx2torch, and compatible numpy
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "onnx", "onnx2torch", "numpy<2",
+        "--target", "/tmp/pypackages",
+        "--quiet", "--no-cache-dir",
+        "--upgrade",
+    ])
+    # Put our packages FIRST so they override system numpy
+    if "/tmp/pypackages" in sys.path:
+        sys.path.remove("/tmp/pypackages")
     sys.path.insert(0, "/tmp/pypackages")
-    logger.info("torch installed successfully.")
+    logger.info("torch + onnx2torch installed successfully.")
 
 # ─────────────────────────────────────────────────────────────
 # Clients (initialised once per Lambda container — stays warm)
@@ -329,7 +360,10 @@ def query_by_thumbnail(event, context):
 
 def query_by_file(event, context):
     import base64
+    import sys
     ensure_torch()  # install torch if not present
+    sys.path.insert(0, "/tmp/pypackages")  # make sure installed packages are on path
+    from ml_inference import run_ml_model_on_file
 
     body = event.get("body", "")
     is_base64 = event.get("isBase64Encoded", False)
@@ -348,8 +382,10 @@ def query_by_file(event, context):
     try:
         detected_tags = run_ml_model_on_file(raw_bytes, file_type)
     except Exception as e:
+        import traceback
         logger.error(f"ML model error: {e}")
-        return err("Failed to process file with ML model", 500)
+        logger.error(traceback.format_exc())
+        return err(f"Failed to process file with ML model: {str(e)}", 500)
 
     if not detected_tags:
         return ok({"detected_tags": [], "thumbnails": [], "videos": []})
