@@ -167,9 +167,18 @@ Resources:
       AttributeDefinitions:
         - AttributeName: checksum
           AttributeType: S
+        - AttributeName: file_id
+          AttributeType: S
       KeySchema:
         - AttributeName: checksum
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-file-id
+          KeySchema:
+            - AttributeName: file_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
       BillingMode: PAY_PER_REQUEST
 
   IngestTriggerFunction:
@@ -230,6 +239,30 @@ Resources:
         Variables:
           FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
 
+  # ---------- LAMBDA: DELETE OBJECTS (called by Track 4) ----------
+  DeleteObjectsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-delete-objects
+      CodeUri: lambdas/delete_objects/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Timeout: 60
+      Environment:
+        Variables:
+          RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+          THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
+          FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
+          CHECKSUMS_TABLE: !Ref FileChecksumsTable
+
+  # Allow Track 4's account to invoke this Lambda cross-account
+  DeleteObjectsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DeleteObjectsFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Ref Track4AccountId
+
   # ---------- API GATEWAY (HTTP API) ----------
   UploadApi:
     Type: AWS::Serverless::HttpApi
@@ -274,6 +307,7 @@ Outputs:
   UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
   ThumbnailFunctionArn: { Value: !GetAtt ThumbnailFunction.Arn }
   VideoFramesFunctionArn: { Value: !GetAtt VideoFramesFunction.Arn }
+  DeleteObjectsFunctionArn: { Value: !GetAtt DeleteObjectsFunction.Arn }
   UploadApiUrl:
     Description: Base URL for the upload API (POST /upload-url)
     Value: !Sub https://${UploadApi}.execute-api.${AWS::Region}.amazonaws.com

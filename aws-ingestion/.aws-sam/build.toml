@@ -26,7 +26,7 @@ runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
 source_hash = "9dbbbe6cdbd698afd00c31a8d366fae6002eeadcff4ef252484155c151089b4a"
-manifest_hash = ""
+manifest_hash = "00e6dacecf3ea0a503ce1e05f3bcd2df"
 packagetype = "Zip"
 functions = ["ThumbnailFunction"]
 
@@ -36,8 +36,17 @@ runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
 source_hash = "5742031470a7447d04f912a67b7a19ff408db535eb3ad991826afebe6a098046"
-manifest_hash = ""
+manifest_hash = "26a2613aa93b7515fc5f5bcd99ea83ab"
 packagetype = "Zip"
 functions = ["VideoFramesFunction"]
+
+[function_build_definitions.e8f36d54-ca94-4976-842e-e7731fca2213]
+codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/delete_objects"
+runtime = "python3.11"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
+packagetype = "Zip"
+functions = ["DeleteObjectsFunction"]
 
 [layer_build_definitions]
