@@ -5,7 +5,7 @@ codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/ingest_tr
 runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
-source_hash = "8aa55c05265053577b3c9934a64e54080cc2c01be403b885a339180eb0183e05"
+source_hash = "7f1cf7d9e9d76479f305db77a2a90972568fc11ef70226c341dcb941a6d6b54b"
 manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
 packagetype = "Zip"
 functions = ["IngestTriggerFunction"]
@@ -29,5 +29,15 @@ source_hash = "9dbbbe6cdbd698afd00c31a8d366fae6002eeadcff4ef252484155c151089b4a"
 manifest_hash = ""
 packagetype = "Zip"
 functions = ["ThumbnailFunction"]
+
+[function_build_definitions.00c36dc8-e76a-4510-879f-43119a655082]
+codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/video_frames"
+runtime = "python3.11"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+source_hash = "5742031470a7447d04f912a67b7a19ff408db535eb3ad991826afebe6a098046"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["VideoFramesFunction"]
 
 [layer_build_definitions]

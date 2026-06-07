@@ -186,6 +186,7 @@ Resources:
           FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
           CHECKSUMS_TABLE: !Ref FileChecksumsTable
           THUMBNAIL_FUNCTION_NAME: !Ref ThumbnailFunction
+          VIDEO_FRAMES_FUNCTION_NAME: !Ref VideoFramesFunction
 
   IngestTriggerPermission:
     Type: AWS::Lambda::Permission
@@ -212,6 +213,22 @@ Resources:
           THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
           THUMB_MAX_DIMENSION: "300"
           THUMB_JPEG_QUALITY: "80"
+
+  # ---------- LAMBDA: VIDEO FRAME EXTRACTOR ----------
+  VideoFramesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-video-frames
+      CodeUri: lambdas/video_frames/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      MemorySize: 2048        # ffmpeg + frame buffering is RAM-hungry
+      Timeout: 300            # 5 min for longer videos
+      EphemeralStorage:
+        Size: 2048            # /tmp space (MB) — videos + frames can be large
+      Environment:
+        Variables:
+          FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
 
   # ---------- API GATEWAY (HTTP API) ----------
   UploadApi:
@@ -256,6 +273,7 @@ Outputs:
   IngestTriggerArn:     { Value: !GetAtt IngestTriggerFunction.Arn }
   UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
   ThumbnailFunctionArn: { Value: !GetAtt ThumbnailFunction.Arn }
+  VideoFramesFunctionArn: { Value: !GetAtt VideoFramesFunction.Arn }
   UploadApiUrl:
     Description: Base URL for the upload API (POST /upload-url)
     Value: !Sub https://${UploadApi}.execute-api.${AWS::Region}.amazonaws.com
