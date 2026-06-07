@@ -5,6 +5,7 @@ codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/ingest_tr
 runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
+source_hash = "8aa55c05265053577b3c9934a64e54080cc2c01be403b885a339180eb0183e05"
 manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
 packagetype = "Zip"
 functions = ["IngestTriggerFunction"]
@@ -14,8 +15,19 @@ codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/upload_ha
 runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
+source_hash = "d5010384c1e19a2bb464cf1f71c00f8c83de8f4f2070a6f709a64f17d741e13a"
 manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
 packagetype = "Zip"
 functions = ["UploadHandlerFunction"]
+
+[function_build_definitions.c958f708-9f06-4f2e-9579-78178338551e]
+codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/thumbnail"
+runtime = "python3.11"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+source_hash = "9dbbbe6cdbd698afd00c31a8d366fae6002eeadcff4ef252484155c151089b4a"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["ThumbnailFunction"]
 
 [layer_build_definitions]

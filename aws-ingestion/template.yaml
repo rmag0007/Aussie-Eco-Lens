@@ -16,6 +16,10 @@ Parameters:
   LabRoleArn:
     Type: String
     Description: ARN of the pre-baked LabRole from AWS Academy
+  Track4AccountId:
+    Type: String
+    Default: "267451756103"
+    Description: Track 4 AWS account ID (cross-account access for queries + transient uploads)
 
 Resources:
 
@@ -81,6 +85,81 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  # ---------- BUCKET POLICIES: GRANT TRACK 4 CROSS-ACCOUNT ACCESS ----------
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-raw-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-raw-${Suffix}/*
+
+  ThumbsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ThumbsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-thumbs-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-thumbs-${Suffix}/*
+
+  FramesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FramesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-frames-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-frames-${Suffix}/*
+
+  QueryTmpBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref QueryTmpBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadWriteAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}/*
+
   FileChecksumsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -106,6 +185,7 @@ Resources:
           THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
           FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
           CHECKSUMS_TABLE: !Ref FileChecksumsTable
+          THUMBNAIL_FUNCTION_NAME: !Ref ThumbnailFunction
 
   IngestTriggerPermission:
     Type: AWS::Lambda::Permission
@@ -114,6 +194,24 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       SourceArn: !Sub arn:aws:s3:::ecolens-raw-${Suffix}
+
+  # ---------- LAMBDA: THUMBNAIL GENERATOR ----------
+  ThumbnailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-thumbnail
+      CodeUri: lambdas/thumbnail/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      MemorySize: 1024     # OpenCV decoding benefits from more RAM
+      Timeout: 60
+      # OpenCV is bundled directly in the deployment zip via requirements.txt.
+      # (AWS Academy SCP blocks cross-account Klayers layers.)
+      Environment:
+        Variables:
+          THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
+          THUMB_MAX_DIMENSION: "300"
+          THUMB_JPEG_QUALITY: "80"
 
   # ---------- API GATEWAY (HTTP API) ----------
   UploadApi:
@@ -157,6 +255,7 @@ Outputs:
   ChecksumsTable:       { Value: !Ref FileChecksumsTable }
   IngestTriggerArn:     { Value: !GetAtt IngestTriggerFunction.Arn }
   UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
+  ThumbnailFunctionArn: { Value: !GetAtt ThumbnailFunction.Arn }
   UploadApiUrl:
     Description: Base URL for the upload API (POST /upload-url)
     Value: !Sub https://${UploadApi}.execute-api.${AWS::Region}.amazonaws.com
