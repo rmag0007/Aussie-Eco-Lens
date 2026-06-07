@@ -9,4 +9,13 @@ manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
 packagetype = "Zip"
 functions = ["IngestTriggerFunction"]
 
+[function_build_definitions.1cf5f5b5-83bc-4bcd-a3e7-b61b97b9508d]
+codeuri = "/Users/leesam/Desktop/Aussie-Eco-Lens/aws-ingestion/lambdas/upload_handler"
+runtime = "python3.11"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = "d41d8cd98f00b204e9800998ecf8427e"
+packagetype = "Zip"
+functions = ["UploadHandlerFunction"]
+
 [layer_build_definitions]

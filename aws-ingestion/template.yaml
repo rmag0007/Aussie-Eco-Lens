@@ -29,6 +29,13 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST, HEAD]
+            AllowedOrigins: ["*"]
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
       NotificationConfiguration:
         LambdaConfigurations:
           - Event: s3:ObjectCreated:*
@@ -108,6 +115,40 @@ Resources:
       Principal: s3.amazonaws.com
       SourceArn: !Sub arn:aws:s3:::ecolens-raw-${Suffix}
 
+  # ---------- API GATEWAY (HTTP API) ----------
+  UploadApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [Content-Type, Authorization]
+
+  # ---------- LAMBDA: UPLOAD HANDLER ----------
+  UploadHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-upload-handler
+      CodeUri: lambdas/upload_handler/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Environment:
+        Variables:
+          RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+      Events:
+        PostUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-url
+            Method: POST
+        OptionsUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-url
+            Method: OPTIONS
+
 Outputs:
   RawBucket:            { Value: !Ref RawBucket }
   ThumbsBucket:         { Value: !Ref ThumbsBucket }
@@ -115,3 +156,7 @@ Outputs:
   QueryTmpBucket:       { Value: !Ref QueryTmpBucket }
   ChecksumsTable:       { Value: !Ref FileChecksumsTable }
   IngestTriggerArn:     { Value: !GetAtt IngestTriggerFunction.Arn }
+  UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
+  UploadApiUrl:
+    Description: Base URL for the upload API (POST /upload-url)
+    Value: !Sub https://${UploadApi}.execute-api.${AWS::Region}.amazonaws.com
