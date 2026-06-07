@@ -6,6 +6,7 @@ import azure.functions as func
 from auth import get_user_from_request
 from database.cosmos_db import save_file_record
 from tagging.pipeline import tag_media_file
+from validation import validate_upload_event
 
 app = func.FunctionApp()
 
@@ -24,6 +25,7 @@ def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
         
         # 2. Read Track 1 upload event
         event = req.get_json()
+        validate_upload_event(event)
 
         file_id = event["file_id"]
         owner_sub = event.get("owner_sub", token_owner_sub)

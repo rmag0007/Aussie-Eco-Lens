@@ -1,0 +1,23 @@
+{
+  "file_id": "test-vid-001",
+  "owner_sub": "test-user-123",
+  "s3_bucket": "ecolens-raw",
+  "s3_key": "uploads/test-user-123/test-vid-001.mp4",
+  "s3_url": "https://ecolens-raw.s3.amazonaws.com/uploads/test-user-123/test-vid-001.mp4",
+  "thumbnail_bucket": null,
+  "thumbnail_key": null,
+  "thumbnail_url": null,
+  "media_type": "video",
+  "checksum_sha256": "fakevideochecksum123",
+  "frames": [
+    {
+      "second": 0,
+      "s3_key": "frames/test-vid-001/0000.jpg"
+    },
+    {
+      "second": 1,
+      "s3_key": "frames/test-vid-001/0001.jpg"
+    }
+  ],
+  "uploaded_at": "2026-06-04T10:35:00Z"
+}
