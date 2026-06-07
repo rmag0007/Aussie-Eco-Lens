@@ -252,7 +252,7 @@ def generate_presigned_url(s3_bucket: str, s3_key: str, expiry: int = 3600) -> s
     Valid for 1 hour by default.
     """
     try:
-        s3 = boto3.client("s3")
+        s3 = boto3.client("s3", region_name="us-east-1")
         url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": s3_bucket, "Key": s3_key},
@@ -686,26 +686,51 @@ def delete_files(event, context):
     if body is None:
         return err("Invalid JSON body")
 
-    # Accept either file_ids or s3_keys (not presigned URLs — those change)
     file_ids = body.get("file_ids") or body.get("urls")
     if not file_ids or not isinstance(file_ids, list):
         return err("'file_ids' must be a non-empty list")
 
-    deleted = 0
-    not_found = []
+    # ── Step 1: Call Track 1's storage delete Lambda ──────────
+    storage_deleted = []
+    storage_failed = []
 
-    for file_id in file_ids:
+    try:
+        lam = boto3.client("lambda", region_name="us-east-1")
+        resp = lam.invoke(
+            FunctionName="arn:aws:lambda:us-east-1:964750750035:function:ecolens-delete-objects",
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"file_ids": file_ids}),
+        )
+        storage_result = json.loads(resp["Payload"].read())
+        storage_deleted = storage_result.get("deleted", [])
+        storage_failed = storage_result.get("failed", [])
+        logger.info(f"Storage delete: deleted={storage_deleted}, failed={storage_failed}")
+    except Exception as e:
+        logger.error(f"Failed to invoke storage delete Lambda: {e}")
+        # If storage Lambda fails, don't delete DB records
+        return err(f"Storage deletion failed: {str(e)}", 500)
+
+    # ── Step 2: Delete DB records for successfully deleted files ──
+    deleted = []
+    failed = list(storage_failed)  # start with storage failures
+
+    for file_id in storage_deleted:
         try:
             found = db_delete_record(file_id)
             if found:
-                deleted += 1
+                deleted.append(file_id)
             else:
-                not_found.append(file_id)
+                # Storage deleted but no DB record — still count as deleted
+                deleted.append(file_id)
+                logger.warning(f"No DB record found for {file_id} — storage was deleted")
         except Exception as e:
             logger.error(f"Cosmos error deleting {file_id}: {e}")
-            not_found.append(file_id)
+            failed.append({"file_id": file_id, "reason": str(e)})
 
-    return ok({"deleted": deleted, "not_found": not_found})
+    return ok({
+        "deleted": deleted,
+        "failed": failed,
+    })
 
 
 # ─────────────────────────────────────────────────────────────
