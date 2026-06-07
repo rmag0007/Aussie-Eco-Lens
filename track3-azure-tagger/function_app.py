@@ -7,6 +7,7 @@ from auth import get_user_from_request
 from database.cosmos_db import save_file_record
 from tagging.pipeline import tag_media_file
 from validation import validate_upload_event
+from notifications import notify_file_tagged
 
 app = func.FunctionApp()
 
@@ -68,26 +69,41 @@ def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
         record = {
             "id": file_id,
             "file_id": file_id,
-
+        
+            # User ownership
             "owner_sub": owner_sub,
             "owner_email": owner_email,
 
+            # File info
             "media_type": media_type,
             "checksum_sha256": checksum_sha256,
 
+            # Permanent S3 location for original file
+            # These should be stored long-term because they do not expire.
             "s3_bucket": s3_bucket,
             "s3_key": s3_key,
-            "s3_url": s3_url,
 
+            # Temporary presigned URL used only for ML tagging.
+            # This expires, so Track 4 should NOT rely on it long-term.
+            "s3_presigned_url_used_for_tagging": s3_url,
+
+            # Permanent S3 location for thumbnail
             "thumbnail_bucket": thumbnail_bucket,
             "thumbnail_key": thumbnail_key,
-            "thumbnail_url": thumbnail_url,
 
+            # Temporary presigned thumbnail URL, if Track 1 sends one
+            "thumbnail_presigned_url_used_for_tagging": thumbnail_url,
+
+            # Video frames
+            # Each frame should store permanent bucket/key.
+            # If Track 1 also sends presigned s3_url for frames, it can be kept temporarily.
             "frames": frames,
 
+            # ML tag output
             "tags": tags,
             "tag_list": list(tags.keys()),
 
+            # Status/timestamps
             "status": "tagged",
             "uploaded_at": uploaded_at,
             "tagged_at": now,
@@ -96,15 +112,17 @@ def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
 
         # 5. Save to Azure Cosmos DB
         save_file_record(record)
+        notification_result = notify_file_tagged(record)
 
         # 6. Return result
         return func.HttpResponse(
-            json.dumps({
+           json.dumps({
                 "status": "success",
                 "file_id": file_id,
                 "owner_sub": owner_sub,
                 "tags": tags,
-                "tag_list": list(tags.keys())
+                "tag_list": list(tags.keys()),
+                "notification": notification_result
             }),
             status_code=200,
             mimetype="application/json"

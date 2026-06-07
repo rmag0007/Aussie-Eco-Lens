@@ -22,22 +22,20 @@ Each uploaded image/video has one document.
 
   "s3_bucket": "ecolens-raw",
   "s3_key": "uploads/user/file.jpg",
-  "s3_url": "https://ecolens-raw.s3.amazonaws.com/uploads/user/file.jpg",
+  "s3_presigned_url_used_for_tagging": "temporary URL, expires",
 
   "thumbnail_bucket": "ecolens-thumbs",
   "thumbnail_key": "thumbs/user/file.jpg",
-  "thumbnail_url": "https://ecolens-thumbs.s3.amazonaws.com/thumbs/user/file.jpg",
+  "thumbnail_presigned_url_used_for_tagging": "temporary URL, expires",
 
   "frames": [],
 
   "tags": {
-    "kangaroo": 2,
-    "wombat": 1
+    "kangaroo": 2
   },
 
   "tag_list": [
-    "kangaroo",
-    "wombat"
+    "kangaroo"
   ],
 
   "status": "tagged",
