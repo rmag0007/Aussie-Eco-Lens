@@ -3,6 +3,8 @@ Fires when a new object lands in ecolens-raw/uploads/*.
 Implements checksum dedup (rubric 2.1.1) and emits the upload-event JSON.
 """
 import os, json, hashlib, uuid
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from urllib.parse import unquote_plus
 import boto3
@@ -28,6 +30,7 @@ FRAMES_BUCKET = os.environ["FRAMES_BUCKET"]
 CHECKSUMS_TABLE = os.environ["CHECKSUMS_TABLE"]
 THUMBNAIL_FUNCTION_NAME = os.environ.get("THUMBNAIL_FUNCTION_NAME")
 VIDEO_FRAMES_FUNCTION_NAME = os.environ.get("VIDEO_FRAMES_FUNCTION_NAME")
+TAGGER_URL = os.environ.get("TAGGER_URL")  # Track 3 Azure Function endpoint
 
 IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "bmp"}
 VIDEO_EXTS = {"mp4", "mov", "avi", "mkv", "webm"}
@@ -93,6 +96,33 @@ def invoke_thumbnail(src_bucket, src_key, file_id, owner_sub):
         print("Thumbnail Lambda error:", body)
         return None
     return body
+
+
+def deliver_to_tagger(upload_event):
+    """POST the upload-event JSON to Track 3's Azure Function.
+    Failure is logged but doesn't fail the whole ingest (event is still in CloudWatch).
+    """
+    if not TAGGER_URL:
+        print("TAGGER_URL not configured; skipping delivery")
+        return False
+    try:
+        data = json.dumps(upload_event).encode("utf-8")
+        req = urllib.request.Request(
+            TAGGER_URL,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            print(f"Tagger delivery OK ({resp.status}): {resp.read(200)!r}")
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read(500).decode("utf-8", errors="replace")
+        print(f"Tagger delivery FAILED {e.code}: {body}")
+        return False
+    except Exception as e:
+        print(f"Tagger delivery ERROR: {e}")
+        return False
 
 
 def invoke_video_frames(src_bucket, src_key, file_id, owner_sub):
@@ -186,5 +216,8 @@ def lambda_handler(event, context):
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
         }
         print("UPLOAD_EVENT:", json.dumps(upload_event))
+
+        # Deliver to Track 3 tagger (Azure Function)
+        deliver_to_tagger(upload_event)
 
     return {"statusCode": 200, "body": "ok"}
