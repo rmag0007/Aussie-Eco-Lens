@@ -34,7 +34,6 @@ Rubric coverage: **2.1.1** upload + checksum dedup, **2.1.2** OpenCV thumbnails 
 | Raw bucket | `ecolens-raw-slee0133` |
 | Thumbnails bucket | `ecolens-thumbs-slee0133` |
 | Frames bucket | `ecolens-frames-slee0133` |
-| Query-tmp bucket | `ecolens-query-tmp-slee0133` |
 | DynamoDB table | `file_checksums` (GSI: `by-file-id`) |
 | Delete Lambda (cross-account invoke) | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-delete-objects` |
 | Ingest trigger Lambda | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-ingest-trigger` |
@@ -58,7 +57,6 @@ Rubric coverage: **2.1.1** upload + checksum dedup, **2.1.2** OpenCV thumbnails 
 | S3 | `ecolens-raw-<suffix>` | Original uploads (private, versioned, CORS for browser PUT) |
 | S3 | `ecolens-thumbs-<suffix>` | Generated thumbnails |
 | S3 | `ecolens-frames-<suffix>` | Extracted video frames (`frames/{file_id}/{NNNN}.jpg`) |
-| S3 | `ecolens-query-tmp-<suffix>` | Transient uploads for query-by-file (24h lifecycle, no pipeline trigger) |
 | DynamoDB | `file_checksums` | SHA256 → file_id dedup table (with `by-file-id` GSI for delete lookups) |
 
 ---
@@ -120,13 +118,12 @@ aws lambda invoke --function-name ecolens-delete-objects \
 - `buckets-and-keys.md` — bucket naming + key conventions (consumed by all tracks)
 - `upload-event.md` — JSON Track 3's Azure Function receives after each upload
 - `delete-contract.md` — Track 4's invoke signature for `ecolens-delete-objects`
-- `tag-only-contract.md` — transient query-by-file flow (rubric 2.2.3)
 
 ---
 
 ## Cross-account access (Track 4)
 
-`template.yaml` includes S3 bucket policies granting Track 4's account (`267451756103`) read access to raw/thumbs/frames and read+write+delete on query-tmp. Track 4's Lambda generates presigned URLs itself using its own LabRole.
+`template.yaml` includes S3 bucket policies granting Track 4's account (`267451756103`) read access to raw, thumbs, and frames. Track 4's Lambda generates presigned URLs itself using its own LabRole.
 
 The `ecolens-delete-objects` Lambda has a resource policy allowing Track 4's account to `lambda:InvokeFunction`.
 
@@ -137,5 +134,4 @@ The `ecolens-delete-objects` Lambda has a resource policy allowing Track 4's acc
 - **In-zip OpenCV + ffmpeg** instead of Lambda layers — AWS Academy SCP blocks `lambda:GetLayerVersion` on cross-account layers like Klayers. `imageio-ffmpeg` bundles the binary inside the wheel.
 - **Presigned URLs everywhere** (60-min default) — Azure Function and Track 4 fetch S3 objects via plain HTTPS GET, no AWS credentials needed cross-cloud.
 - **DynamoDB GSI `by-file-id`** — lets the delete Lambda look up an `s3_key` in one query instead of scanning the table.
-- **`query-tmp` bucket has no S3 event trigger** — guarantees the rubric 2.2.3 "not persisted" requirement at the infrastructure level. Lifecycle rule auto-expires after 24h as defence in depth.
 - **`Tagger URL` is an env var** — model/endpoint changes don't require code changes (aligns with rubric 4.1 thinking).

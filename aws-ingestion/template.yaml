@@ -74,21 +74,6 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-  QueryTmpBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub ecolens-query-tmp-${Suffix}
-      LifecycleConfiguration:
-        Rules:
-          - Id: expire-query-uploads
-            Status: Enabled
-            ExpirationInDays: 1
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
   # ---------- BUCKET POLICIES: GRANT TRACK 4 CROSS-ACCOUNT ACCESS ----------
   RawBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -143,26 +128,6 @@ Resources:
             Resource:
               - !Sub arn:aws:s3:::ecolens-frames-${Suffix}
               - !Sub arn:aws:s3:::ecolens-frames-${Suffix}/*
-
-  QueryTmpBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref QueryTmpBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: Track4ReadWriteAccess
-            Effect: Allow
-            Principal:
-              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
-            Action:
-              - s3:GetObject
-              - s3:PutObject
-              - s3:DeleteObject
-              - s3:ListBucket
-            Resource:
-              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}
-              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}/*
 
   FileChecksumsTable:
     Type: AWS::DynamoDB::Table
@@ -307,7 +272,6 @@ Outputs:
   RawBucket:            { Value: !Ref RawBucket }
   ThumbsBucket:         { Value: !Ref ThumbsBucket }
   FramesBucket:         { Value: !Ref FramesBucket }
-  QueryTmpBucket:       { Value: !Ref QueryTmpBucket }
   ChecksumsTable:       { Value: !Ref FileChecksumsTable }
   IngestTriggerArn:     { Value: !GetAtt IngestTriggerFunction.Arn }
   UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
