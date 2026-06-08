@@ -129,6 +129,36 @@ Resources:
               - !Sub arn:aws:s3:::ecolens-frames-${Suffix}
               - !Sub arn:aws:s3:::ecolens-frames-${Suffix}/*
 
+  UploadTokensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: upload_tokens
+      AttributeDefinitions:
+        - AttributeName: file_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: file_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      BillingMode: PAY_PER_REQUEST
+
+  TaggingResultsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: tagging_results
+      AttributeDefinitions:
+        - AttributeName: file_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: file_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      BillingMode: PAY_PER_REQUEST
+
   FileChecksumsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -167,6 +197,8 @@ Resources:
           THUMBNAIL_FUNCTION_NAME: !Ref ThumbnailFunction
           VIDEO_FRAMES_FUNCTION_NAME: !Ref VideoFramesFunction
           TAGGER_URL: !Ref TaggerUrl
+          UPLOAD_TOKENS_TABLE: !Ref UploadTokensTable
+          TAGGING_RESULTS_TABLE: !Ref TaggingResultsTable
 
   IngestTriggerPermission:
     Type: AWS::Lambda::Permission
@@ -240,7 +272,7 @@ Resources:
     Properties:
       CorsConfiguration:
         AllowOrigins: ["*"]
-        AllowMethods: [POST, OPTIONS]
+        AllowMethods: [GET, POST, OPTIONS]
         AllowHeaders: [Content-Type, Authorization]
 
   # ---------- LAMBDA: UPLOAD HANDLER ----------
@@ -254,6 +286,8 @@ Resources:
       Environment:
         Variables:
           RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+          UPLOAD_TOKENS_TABLE: !Ref UploadTokensTable
+          CHECKSUMS_TABLE: !Ref FileChecksumsTable
       Events:
         PostUploadUrl:
           Type: HttpApi
@@ -266,6 +300,31 @@ Resources:
           Properties:
             ApiId: !Ref UploadApi
             Path: /upload-url
+            Method: OPTIONS
+
+  # ---------- LAMBDA: UPLOAD STATUS (returns tags after Track 3 finishes) ----------
+  UploadStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-upload-status
+      CodeUri: lambdas/upload_status/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Environment:
+        Variables:
+          TAGGING_RESULTS_TABLE: !Ref TaggingResultsTable
+      Events:
+        GetStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-status/{file_id}
+            Method: GET
+        OptionsStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-status/{file_id}
             Method: OPTIONS
 
 Outputs:

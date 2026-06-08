@@ -26,3 +26,6 @@ __pycache__/
 .DS_Store
 tests/events/real_s3_image_event.json
 tests/test_download_presigned.py
+
+# SAM build artifacts
+aws-ingestion/.aws-sam/
