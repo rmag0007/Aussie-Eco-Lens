@@ -1,130 +1,141 @@
-# ecolens
+# Track 1 — AWS Ingestion Pipeline
 
-This project contains source code and supporting files for a serverless application that you can deploy with the SAM CLI. It includes the following files and folders.
+The AWS half of Aussie EcoLens. Handles **uploads, deduplication, thumbnails, video frame extraction, delete cascade, and event delivery to Track 3 (Azure)**.
 
-- hello_world - Code for the application's Lambda function.
-- events - Invocation events that you can use to invoke the function.
-- tests - Unit tests for the application code. 
-- template.yaml - A template that defines the application's AWS resources.
+All infrastructure is defined in `template.yaml` and deployed via AWS SAM.
 
-The application uses several AWS resources, including Lambda functions and an API Gateway API. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
+---
 
-If you prefer to use an integrated development environment (IDE) to build and test your application, you can use the AWS Toolkit.  
-The AWS Toolkit is an open source plug-in for popular IDEs that uses the SAM CLI to build and deploy serverless applications on AWS. The AWS Toolkit also adds a simplified step-through debugging experience for Lambda function code. See the following links to get started.
+## What it does
 
-* [CLion](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [GoLand](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [IntelliJ](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [WebStorm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [Rider](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [PhpStorm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [PyCharm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [RubyMine](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [DataGrip](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [VS Code](https://docs.aws.amazon.com/toolkit-for-vscode/latest/userguide/welcome.html)
-* [Visual Studio](https://docs.aws.amazon.com/toolkit-for-visual-studio/latest/user-guide/welcome.html)
+```
+User → POST /upload-url ─────→ presigned PUT URL ──→ User PUTs file directly to S3
+                                                            ↓
+                                                S3 ObjectCreated event
+                                                            ↓
+                                              ingest-trigger Lambda
+                                                ├─ SHA256 checksum dedup (DynamoDB)
+                                                ├─ invoke thumbnail Lambda (images)
+                                                ├─ invoke video-frames Lambda (videos)
+                                                └─ HTTP POST upload-event JSON → Azure Function
+```
 
-## Deploy the sample application
+Rubric coverage: **2.1.1** upload + checksum dedup, **2.1.2** OpenCV thumbnails + 1 fps video frames, **2.3.2** delete cascade (storage side), **1.3** cross-account bucket policies.
 
-The Serverless Application Model Command Line Interface (SAM CLI) is an extension of the AWS CLI that adds functionality for building and testing Lambda applications. It uses Docker to run your functions in an Amazon Linux environment that matches Lambda. It can also emulate your application's build environment and API.
+---
 
-To use the SAM CLI, you need the following tools.
+## Live endpoints (current deployment)
 
-* SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
-* [Python 3 installed](https://www.python.org/downloads/)
-* Docker - [Install Docker community edition](https://hub.docker.com/search/?type=edition&offering=community)
+| Thing | Value |
+|---|---|
+| **Upload API** | `POST https://pe8yzy3fo3.execute-api.us-east-1.amazonaws.com/upload-url` |
+| Region | `us-east-1` |
+| AWS account | `964750750035` |
+| Raw bucket | `ecolens-raw-slee0133` |
+| Thumbnails bucket | `ecolens-thumbs-slee0133` |
+| Frames bucket | `ecolens-frames-slee0133` |
+| Query-tmp bucket | `ecolens-query-tmp-slee0133` |
+| DynamoDB table | `file_checksums` (GSI: `by-file-id`) |
+| Delete Lambda (cross-account invoke) | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-delete-objects` |
+| Ingest trigger Lambda | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-ingest-trigger` |
+| Upload handler Lambda | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-upload-handler` |
+| Thumbnail Lambda | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-thumbnail` |
+| Video frames Lambda | `arn:aws:lambda:us-east-1:964750750035:function:ecolens-video-frames` |
+| Track 3 (downstream) tagger URL | `https://aussie-ecolens-track3-suryashree.azurewebsites.net/api/tag-upload` |
 
-To build and deploy your application for the first time, run the following in your shell:
+---
+
+## Resources deployed
+
+| Type | Name | Purpose |
+|---|---|---|
+| API Gateway HTTP API | `UploadApi` | `POST /upload-url` endpoint (returns presigned PUT URL) |
+| Lambda | `ecolens-upload-handler` | Validates filename, generates `file_id`, returns presigned URL |
+| Lambda | `ecolens-ingest-trigger` | Fires on S3 raw upload — dedup, orchestrate, deliver to Track 3 |
+| Lambda | `ecolens-thumbnail` | OpenCV resize (300px max, aspect-ratio preserved, JPEG q80) |
+| Lambda | `ecolens-video-frames` | ffmpeg extracts 1 frame per second from videos |
+| Lambda | `ecolens-delete-objects` | Cascade-delete raw + thumb + frames + dedup row (called by Track 4) |
+| S3 | `ecolens-raw-<suffix>` | Original uploads (private, versioned, CORS for browser PUT) |
+| S3 | `ecolens-thumbs-<suffix>` | Generated thumbnails |
+| S3 | `ecolens-frames-<suffix>` | Extracted video frames (`frames/{file_id}/{NNNN}.jpg`) |
+| S3 | `ecolens-query-tmp-<suffix>` | Transient uploads for query-by-file (24h lifecycle, no pipeline trigger) |
+| DynamoDB | `file_checksums` | SHA256 → file_id dedup table (with `by-file-id` GSI for delete lookups) |
+
+---
+
+## Deploy
+
+Requires: AWS CLI v2, SAM CLI, Docker (for OpenCV/ffmpeg in-zip builds), Python 3.11.
 
 ```bash
+# Get your LabRole ARN
+aws iam get-role --role-name LabRole --query 'Role.Arn' --output text
+
+# First-time deploy
 sam build --use-container
-sam deploy --guided
+sam deploy --guided     # supply Suffix and LabRoleArn parameters
+
+# Subsequent deploys
+sam build --use-container
+sam deploy
 ```
 
-The first command will build the source of your application. The second command will package and deploy your application to AWS, with a series of prompts:
+Outputs after deploy include `UploadApiUrl` — the public endpoint for `POST /upload-url`.
 
-* **Stack Name**: The name of the stack to deploy to CloudFormation. This should be unique to your account and region, and a good starting point would be something matching your project name.
-* **AWS Region**: The AWS region you want to deploy your app to.
-* **Confirm changes before deploy**: If set to yes, any change sets will be shown to you before execution for manual review. If set to no, the AWS SAM CLI will automatically deploy application changes.
-* **Allow SAM CLI IAM role creation**: Many AWS SAM templates, including this example, create AWS IAM roles required for the AWS Lambda function(s) included to access AWS services. By default, these are scoped down to minimum required permissions. To deploy an AWS CloudFormation stack which creates or modifies IAM roles, the `CAPABILITY_IAM` value for `capabilities` must be provided. If permission isn't provided through this prompt, to deploy this example you must explicitly pass `--capabilities CAPABILITY_IAM` to the `sam deploy` command.
-* **Save arguments to samconfig.toml**: If set to yes, your choices will be saved to a configuration file inside the project, so that in the future you can just re-run `sam deploy` without parameters to deploy changes to your application.
+---
 
-You can find your API Gateway Endpoint URL in the output values displayed after deployment.
-
-## Use the SAM CLI to build and test locally
-
-Build your application with the `sam build --use-container` command.
+## Test (smoke)
 
 ```bash
-ecolens$ sam build --use-container
+# 1. Get a presigned upload URL via the API
+API="$(aws cloudformation describe-stacks --stack-name ecolens-track1 \
+  --query "Stacks[0].Outputs[?OutputKey=='UploadApiUrl'].OutputValue" --output text)"
+
+curl -X POST "$API/upload-url" \
+  -H "Content-Type: application/json" \
+  -d '{"filename":"koala.jpg","content_type":"image/jpeg","owner_sub":"test-user"}'
+# → returns {upload_url, file_id, s3_bucket, s3_key, expires_in_seconds}
+
+# 2. PUT the file directly to S3 using the returned upload_url
+curl -X PUT "<upload_url>" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary "@koala.jpg"
+
+# 3. Watch the pipeline fire
+sam logs --stack-name ecolens-track1 --name IngestTriggerFunction --tail
+# You will see: checksum → UPLOAD_EVENT → Tagger delivery OK (200)
+
+# 4. Test dedup — upload the same file again, watch for "DUPLICATE detected"
+
+# 5. Test delete cascade
+aws lambda invoke --function-name ecolens-delete-objects \
+  --payload '{"file_ids":["<paste file_id>"]}' \
+  --cli-binary-format raw-in-base64-out /tmp/out.json && cat /tmp/out.json
 ```
 
-The SAM CLI installs dependencies defined in `hello_world/requirements.txt`, creates a deployment package, and saves it in the `.aws-sam/build` folder.
+---
 
-Test a single function by invoking it directly with a test event. An event is a JSON document that represents the input that the function receives from the event source. Test events are included in the `events` folder in this project.
+## Contracts (in `../docs/contracts/`)
 
-Run functions locally and invoke them with the `sam local invoke` command.
+- `buckets-and-keys.md` — bucket naming + key conventions (consumed by all tracks)
+- `upload-event.md` — JSON Track 3's Azure Function receives after each upload
+- `delete-contract.md` — Track 4's invoke signature for `ecolens-delete-objects`
+- `tag-only-contract.md` — transient query-by-file flow (rubric 2.2.3)
 
-```bash
-ecolens$ sam local invoke HelloWorldFunction --event events/event.json
-```
+---
 
-The SAM CLI can also emulate your application's API. Use the `sam local start-api` to run the API locally on port 3000.
+## Cross-account access (Track 4)
 
-```bash
-ecolens$ sam local start-api
-ecolens$ curl http://localhost:3000/
-```
+`template.yaml` includes S3 bucket policies granting Track 4's account (`267451756103`) read access to raw/thumbs/frames and read+write+delete on query-tmp. Track 4's Lambda generates presigned URLs itself using its own LabRole.
 
-The SAM CLI reads the application template to determine the API's routes and the functions that they invoke. The `Events` property on each function's definition includes the route and method for each path.
+The `ecolens-delete-objects` Lambda has a resource policy allowing Track 4's account to `lambda:InvokeFunction`.
 
-```yaml
-      Events:
-        HelloWorld:
-          Type: Api
-          Properties:
-            Path: /hello
-            Method: get
-```
+---
 
-## Add a resource to your application
-The application template uses AWS Serverless Application Model (AWS SAM) to define application resources. AWS SAM is an extension of AWS CloudFormation with a simpler syntax for configuring common serverless application resources such as functions, triggers, and APIs. For resources not included in [the SAM specification](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md), you can use standard [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) resource types.
+## Notes / design decisions
 
-## Fetch, tail, and filter Lambda function logs
-
-To simplify troubleshooting, SAM CLI has a command called `sam logs`. `sam logs` lets you fetch logs generated by your deployed Lambda function from the command line. In addition to printing the logs on the terminal, this command has several nifty features to help you quickly find the bug.
-
-`NOTE`: This command works for all AWS Lambda functions; not just the ones you deploy using SAM.
-
-```bash
-ecolens$ sam logs -n HelloWorldFunction --stack-name "ecolens" --tail
-```
-
-You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
-
-## Tests
-
-Tests are defined in the `tests` folder in this project. Use PIP to install the test dependencies and run tests.
-
-```bash
-ecolens$ pip install -r tests/requirements.txt --user
-# unit test
-ecolens$ python -m pytest tests/unit -v
-# integration test, requiring deploying the stack first.
-# Create the env variable AWS_SAM_STACK_NAME with the name of the stack we are testing
-ecolens$ AWS_SAM_STACK_NAME="ecolens" python -m pytest tests/integration -v
-```
-
-## Cleanup
-
-To delete the sample application that you created, use the AWS CLI. Assuming you used your project name for the stack name, you can run the following:
-
-```bash
-sam delete --stack-name "ecolens"
-```
-
-## Resources
-
-See the [AWS SAM developer guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html) for an introduction to SAM specification, the SAM CLI, and serverless application concepts.
-
-Next, you can use AWS Serverless Application Repository to deploy ready to use Apps that go beyond hello world samples and learn how authors developed their applications: [AWS Serverless Application Repository main page](https://aws.amazon.com/serverless/serverlessrepo/)
+- **In-zip OpenCV + ffmpeg** instead of Lambda layers — AWS Academy SCP blocks `lambda:GetLayerVersion` on cross-account layers like Klayers. `imageio-ffmpeg` bundles the binary inside the wheel.
+- **Presigned URLs everywhere** (60-min default) — Azure Function and Track 4 fetch S3 objects via plain HTTPS GET, no AWS credentials needed cross-cloud.
+- **DynamoDB GSI `by-file-id`** — lets the delete Lambda look up an `s3_key` in one query instead of scanning the table.
+- **`query-tmp` bucket has no S3 event trigger** — guarantees the rubric 2.2.3 "not persisted" requirement at the infrastructure level. Lifecycle rule auto-expires after 24h as defence in depth.
+- **`Tagger URL` is an env var** — model/endpoint changes don't require code changes (aligns with rubric 4.1 thinking).
