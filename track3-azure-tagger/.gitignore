@@ -1,1 +1,26 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Azure local secrets
 local.settings.json
+
+# Temporary/generated files
+tmp/
+cropped_images/
+downloads/
+__pycache__/
+*.pyc
+
+# Large model files
+models/*.pt
+models/*.pth
+models/*.onnx
+
+# Real presigned URL test files
+tests/events/real_s3_image_event.json
+tests/test_download_presigned.py
+
+# macOS
+.DS_Store

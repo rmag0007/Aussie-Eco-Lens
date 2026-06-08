@@ -10,3 +10,19 @@ __pycache__/
 
 # DS Store (Mac)
 .DS_Store
+
+.venv/
+venv/
+env/
+local.settings.json
+tmp/
+cropped_images/
+downloads/
+models/*.pt
+models/*.pth
+models/*.onnx
+__pycache__/
+*.pyc
+.DS_Store
+tests/events/real_s3_image_event.json
+tests/test_download_presigned.py
