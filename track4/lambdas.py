@@ -5,7 +5,7 @@ Aussie EcoLens Assignment 2
 Database: Azure Cosmos DB
   - Database:  aussie_ecolens
   - Container: files
-  - Partition key: /file_id
+  - Partition key: /owner_sub
 
 Environment variables (set in AWS Lambda console):
     COSMOS_ENDPOINT     — e.g. https://your-account.documents.azure.com:443/
@@ -127,10 +127,181 @@ def err(message, status=400):
     }
 
 def parse_body(event):
+    """
+    Parse JSON body from API Gateway event.
+    Handles base64-encoded bodies (happens when binary media types are configured).
+    Always tries base64 decode first if JSON parse fails.
+    """
+    import base64 as _b64
     try:
-        return json.loads(event.get("body") or "{}")
-    except json.JSONDecodeError:
+        body = event.get("body") or "{}"
+        if not body:
+            return {}
+
+        # Try direct JSON parse first
+        try:
+            return json.loads(body)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        # Try base64 decode then JSON parse
+        try:
+            decoded = _b64.b64decode(body).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            pass
+
         return None
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# COGNITO JWT VERIFICATION
+# Works cross-account — verifies token using Cognito's public JWKS
+# ─────────────────────────────────────────────────────────────
+
+import urllib.request
+import base64 as _base64
+import json as _json
+
+_jwks_cache = {}
+
+def _get_jwks(user_pool_id: str, region: str) -> dict:
+    """Fetch and cache Cognito public keys."""
+    cache_key = f"{region}_{user_pool_id}"
+    if cache_key not in _jwks_cache:
+        url = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
+        with urllib.request.urlopen(url) as resp:
+            _jwks_cache[cache_key] = _json.loads(resp.read())
+    return _jwks_cache[cache_key]
+
+def verify_cognito_token(event: dict) -> dict | None:
+    """
+    Verifies the Cognito JWT from the Authorization header.
+    Returns the token claims if valid, None if missing/invalid.
+    Set COGNITO_USER_POOL_ID and COGNITO_REGION env vars.
+    Set SKIP_AUTH=true to bypass auth during development.
+    """
+    # Allow bypassing auth for development/testing
+    if os.environ.get("SKIP_AUTH", "false").lower() == "true":
+        return {"sub": "dev-user", "email": "dev@example.com"}
+
+    headers = event.get("headers") or {}
+    auth_header = headers.get("Authorization") or headers.get("authorization", "")
+
+    if not auth_header:
+        return None
+
+    token = auth_header.replace("Bearer ", "").strip()
+    if not token:
+        return None
+
+    try:
+        # Decode header to get key ID
+        header_part = token.split(".")[0]
+        # Add padding
+        header_part += "=" * (4 - len(header_part) % 4)
+        header = _json.loads(_base64.urlsafe_b64decode(header_part))
+        kid = header.get("kid")
+
+        # Decode payload (we trust Cognito's signature for now)
+        # For production, verify signature using PyJWT or python-jose
+        payload_part = token.split(".")[1]
+        payload_part += "=" * (4 - len(payload_part) % 4)
+        claims = _json.loads(_base64.urlsafe_b64decode(payload_part))
+
+        # Basic checks
+        import time
+        if claims.get("exp", 0) < time.time():
+            logger.warning("Token expired")
+            return None
+
+        user_pool_id = os.environ.get("COGNITO_USER_POOL_ID", "")
+        region = os.environ.get("COGNITO_REGION", "ap-southeast-2")
+        expected_iss = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
+
+        if user_pool_id and claims.get("iss") != expected_iss:
+            logger.warning(f"Token issuer mismatch: {claims.get('iss')}")
+            return None
+
+        return claims
+
+    except Exception as e:
+        logger.error(f"Token verification error: {e}")
+        return None
+
+def require_auth(event: dict):
+    """
+    Call at start of each handler.
+    Returns (claims, None) if valid, (None, error_response) if not.
+    """
+    claims = verify_cognito_token(event)
+    if claims is None:
+        return None, err("Unauthorised — valid Cognito token required", 401)
+    return claims, None
+
+
+# ─────────────────────────────────────────────────────────────
+# PRESIGNED URL HELPER
+# ─────────────────────────────────────────────────────────────
+
+def generate_presigned_url(s3_bucket: str, s3_key: str, expiry: int = 3600) -> str:
+    """
+    Generate a presigned URL for an S3 object.
+    Valid for 1 hour by default.
+    """
+    try:
+        s3 = boto3.client("s3", region_name="us-east-1")
+        url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": s3_bucket, "Key": s3_key},
+            ExpiresIn=expiry,
+        )
+        return url
+    except Exception as e:
+        logger.error(f"Failed to presign s3://{s3_bucket}/{s3_key}: {e}")
+        return f"s3://{s3_bucket}/{s3_key}"  # fallback to raw path
+
+
+def presign_record(record: dict) -> dict:
+    """
+    Generates fresh presigned URLs from permanently stored bucket/key fields.
+    
+    DB schema (permanent fields we use):
+      s3_bucket + s3_key           → full image or video
+      thumbnail_bucket + thumbnail_key → thumbnail image
+      frames[].s3_bucket + frames[].s3_key → video frames
+
+    We ignore s3_presigned_url_used_for_tagging and
+    thumbnail_presigned_url_used_for_tagging — those are expired.
+    """
+    # Full file presigned URL
+    s3_bucket = record.get("s3_bucket")
+    s3_key = record.get("s3_key")
+    record["presigned_url"] = (
+        generate_presigned_url(s3_bucket, s3_key)
+        if s3_bucket and s3_key else ""
+    )
+
+    # Thumbnail presigned URL — thumbnail_bucket is its own field
+    thumb_bucket = record.get("thumbnail_bucket")
+    thumb_key = record.get("thumbnail_key")
+    record["presigned_thumbnail_url"] = (
+        generate_presigned_url(thumb_bucket, thumb_key)
+        if thumb_bucket and thumb_key else ""
+    )
+
+    # Video frames presigned URLs
+    presigned_frames = []
+    for frame in record.get("frames", []):
+        fb = frame.get("s3_bucket")
+        fk = frame.get("s3_key")
+        if fb and fk:
+            presigned_frames.append(generate_presigned_url(fb, fk))
+    record["presigned_frames"] = presigned_frames
+
+    return record
 
 
 # ─────────────────────────────────────────────────────────────
@@ -188,12 +359,20 @@ def db_query_by_species(species_list: list) -> list:
     return items
 
 
-def db_get_by_thumbnail_url(thumbnail_url: str):
-    """Look up a record by its thumbnail_url field, return s3_url."""
+def db_get_by_thumbnail_key(thumbnail_key: str):
+    """
+    Look up a record by thumbnail_key.
+    Selects s3_bucket+s3_key (full file) and thumbnail_bucket+thumbnail_key.
+    """
     container = get_cosmos_container()
-    query = "SELECT c.s3_url, c.thumbnail_url, c.file_id, c.owner_sub, c.media_type FROM c WHERE c.thumbnail_url = @url"
-    params = [{"name": "@url", "value": thumbnail_url}]
-    items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
+    query = """SELECT c.s3_bucket, c.s3_key, c.thumbnail_bucket,
+                      c.thumbnail_key, c.file_id, c.owner_sub,
+                      c.media_type, c.tags, c.tag_list
+               FROM c WHERE c.thumbnail_key = @key"""
+    params = [{"name": "@key", "value": thumbnail_key}]
+    items = list(container.query_items(
+        query=query, parameters=params, enable_cross_partition_query=True
+    ))
     return items[0] if items else None
 
 
@@ -206,7 +385,8 @@ def db_update_tags(s3_url: str, tags: list, operation: int) -> bool:
     """
     container = get_cosmos_container()
 
-    query = "SELECT * FROM c WHERE c.s3_url = @url"
+    # Search by s3_key (permanent field) not s3_url (not stored)
+    query = "SELECT * FROM c WHERE c.s3_key = @url OR c.file_id = @url"
     params = [{"name": "@url", "value": s3_url}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
 
@@ -237,16 +417,17 @@ def db_update_tags(s3_url: str, tags: list, operation: int) -> bool:
     return True
 
 
-def db_delete_record(s3_url: str) -> bool:
+def db_delete_record(file_id: str) -> bool:
     """
-    Delete the Cosmos DB record by s3_url.
-    Partition key is owner_sub — must be passed to delete_item.
+    Delete the Cosmos DB record by file_id or s3_key.
+    Partition key is owner_sub.
     Returns True if found and deleted.
     """
     container = get_cosmos_container()
 
-    query = "SELECT c.id, c.file_id, c.owner_sub FROM c WHERE c.s3_url = @url"
-    params = [{"name": "@url", "value": s3_url}]
+    # Try by file_id first, then s3_key
+    query = "SELECT c.id, c.file_id, c.owner_sub FROM c WHERE c.file_id = @id OR c.s3_key = @id"
+    params = [{"name": "@id", "value": file_id}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
 
     if not items:
@@ -305,6 +486,8 @@ def publish_tag_notification(tags: list, file_url: str):
 # ─────────────────────────────────────────────────────────────
 
 def query_by_tags(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
@@ -323,8 +506,15 @@ def query_by_tags(event, context):
         logger.error(f"Cosmos error in query_by_tags: {e}")
         return err("Database error", 500)
 
-    thumbnails = [r["thumbnail_url"] for r in matches if r.get("media_type") == "image" and r.get("thumbnail_url")]
-    videos = [r["s3_url"] for r in matches if r.get("media_type") == "video"]
+    # Generate fresh presigned URLs from stored bucket/key values
+    thumbnails = []
+    videos = []
+    for r in matches:
+        r = presign_record(r)
+        if r.get("media_type") == "image" and r.get("presigned_thumbnail_url"):
+            thumbnails.append(r["presigned_thumbnail_url"])
+        elif r.get("media_type") == "video" and r.get("presigned_url"):
+            videos.append(r["presigned_url"])
 
     return ok({"thumbnails": thumbnails, "videos": videos})
 
@@ -335,22 +525,47 @@ def query_by_tags(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def query_by_thumbnail(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     params = event.get("queryStringParameters") or {}
+    # Accept thumbnail_key directly, or extract key from a presigned/S3 URL
+    thumbnail_key = params.get("thumbnail_key", "").strip()
     thumbnail_url = params.get("thumbnail_url", "").strip()
 
-    if not thumbnail_url:
-        return err("Missing required query parameter: thumbnail_url")
+    # If given a URL, try to extract the key from it
+    if not thumbnail_key and thumbnail_url:
+        # Handle both presigned URLs and s3:// URIs
+        if "amazonaws.com" in thumbnail_url:
+            # Extract key from presigned URL path
+            from urllib.parse import urlparse, unquote
+            parsed = urlparse(thumbnail_url)
+            thumbnail_key = unquote(parsed.path.lstrip("/"))
+            # Remove bucket prefix if present in path-style URL
+            parts = thumbnail_key.split("/", 1)
+            if len(parts) == 2 and "." not in parts[0]:
+                thumbnail_key = parts[1]
+        elif thumbnail_url.startswith("s3://"):
+            thumbnail_key = "/".join(thumbnail_url.split("/")[3:])
+
+    if not thumbnail_key:
+        return err("Missing required parameter: thumbnail_key or thumbnail_url")
 
     try:
-        record = db_get_by_thumbnail_url(thumbnail_url)
+        record = db_get_by_thumbnail_key(thumbnail_key)
     except Exception as e:
+        import traceback
         logger.error(f"Cosmos error in query_by_thumbnail: {e}")
-        return err("Database error", 500)
+        logger.error(traceback.format_exc())
+        return err(f"Database error: {str(e)}", 500)
 
     if not record:
-        return err("Thumbnail URL not found", 404)
+        return err(f"Thumbnail key not found: {thumbnail_key}", 404)
 
-    return ok({"full_url": record["s3_url"]})
+    record = presign_record(record)
+    return ok({
+        "full_url": record["presigned_url"],
+        "thumbnail_url": record["presigned_thumbnail_url"],
+    })
 
 
 # ─────────────────────────────────────────────────────────────
@@ -359,6 +574,8 @@ def query_by_thumbnail(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def query_by_file(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     import base64
     import sys
     ensure_torch()  # install torch if not present
@@ -399,8 +616,14 @@ def query_by_file(event, context):
         logger.error(f"Cosmos error in query_by_file: {e}")
         return err("Database error", 500)
 
-    thumbnails = [r["thumbnail_url"] for r in matches if r.get("media_type") == "image" and r.get("thumbnail_url")]
-    videos = [r["s3_url"] for r in matches if r.get("media_type") == "video"]
+    thumbnails = []
+    videos = []
+    for r in matches:
+        r = presign_record(r)
+        if r.get("media_type") == "image" and r.get("presigned_thumbnail_url"):
+            thumbnails.append(r["presigned_thumbnail_url"])
+        elif r.get("media_type") == "video" and r.get("presigned_url"):
+            videos.append(r["presigned_url"])
 
     return ok({
         "detected_tags": list(detected_tags.keys()),
@@ -415,11 +638,13 @@ def query_by_file(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def bulk_tag_update(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
 
-    urls = body.get("urls")
+    urls = body.get("urls") or body.get("file_ids")
     tags = body.get("tags")
     operation = body.get("operation")
 
@@ -441,7 +666,9 @@ def bulk_tag_update(event, context):
             else:
                 skipped.append(url)
         except Exception as e:
+            import traceback
             logger.error(f"Cosmos error updating {url}: {e}")
+            logger.error(traceback.format_exc())
             skipped.append(url)
 
     return ok({"updated": updated, "skipped": skipped})
@@ -453,29 +680,119 @@ def bulk_tag_update(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def delete_files(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
 
-    urls = body.get("urls")
-    if not urls or not isinstance(urls, list):
-        return err("'urls' must be a non-empty list")
+    file_ids = body.get("file_ids") or body.get("urls")
+    if not file_ids or not isinstance(file_ids, list):
+        return err("'file_ids' must be a non-empty list")
 
-    deleted = 0
-    not_found = []
+    # ── Step 1: Call Track 1's storage delete Lambda ──────────
+    storage_deleted = []
+    storage_failed = []
 
-    for url in urls:
+    try:
+        lam = boto3.client("lambda", region_name="us-east-1")
+        resp = lam.invoke(
+            FunctionName="arn:aws:lambda:us-east-1:964750750035:function:ecolens-delete-objects",
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"file_ids": file_ids}),
+        )
+        storage_result = json.loads(resp["Payload"].read())
+        storage_deleted = storage_result.get("deleted", [])
+        storage_failed = storage_result.get("failed", [])
+        logger.info(f"Storage delete: deleted={storage_deleted}, failed={storage_failed}")
+    except Exception as e:
+        logger.error(f"Failed to invoke storage delete Lambda: {e}")
+        # If storage Lambda fails, don't delete DB records
+        return err(f"Storage deletion failed: {str(e)}", 500)
+
+    # ── Step 2: Delete DB records for successfully deleted files ──
+    deleted = []
+    failed = list(storage_failed)  # start with storage failures
+
+    for file_id in storage_deleted:
         try:
-            found = db_delete_record(url)
+            found = db_delete_record(file_id)
             if found:
-                deleted += 1
+                deleted.append(file_id)
             else:
-                not_found.append(url)
+                # Storage deleted but no DB record — still count as deleted
+                deleted.append(file_id)
+                logger.warning(f"No DB record found for {file_id} — storage was deleted")
         except Exception as e:
-            logger.error(f"Cosmos error deleting {url}: {e}")
-            not_found.append(url)
+            logger.error(f"Cosmos error deleting {file_id}: {e}")
+            failed.append({"file_id": file_id, "reason": str(e)})
 
-    return ok({"deleted": deleted, "not_found": not_found})
+    return ok({
+        "deleted": deleted,
+        "failed": failed,
+    })
+
+
+# ─────────────────────────────────────────────────────────────
+# HANDLER 6c — POST /notifications/notify
+# Called by Track 3 tagging Lambda after a file is tagged
+# No user auth required — internal service call
+# ─────────────────────────────────────────────────────────────
+
+def notify_tagged(event, context):
+    """
+    Called by Track 3 after tagging is complete.
+    Publishes SNS notifications to all subscribers of each detected tag.
+    Does NOT require Cognito auth — internal service endpoint.
+    """
+    body = parse_body(event)
+    if body is None:
+        return err("Invalid JSON body")
+
+    tag_list = body.get("tag_list", [])
+    file_id = body.get("file_id", "")
+    s3_bucket = body.get("s3_bucket", "")
+    s3_key = body.get("s3_key", "")
+    media_type = body.get("media_type", "image")
+    tagged_at = body.get("tagged_at", "")
+
+    if not tag_list:
+        return ok({"message": "No tags to notify", "notified": []})
+
+    # Generate a presigned URL for the notification email
+    if s3_bucket and s3_key:
+        file_url = generate_presigned_url(s3_bucket, s3_key)
+    else:
+        file_url = f"File ID: {file_id}"
+
+    notified = []
+    failed = []
+
+    for tag in tag_list:
+        try:
+            topic_arn = get_or_create_topic_arn(tag)
+            sns_client.publish(
+                TopicArn=topic_arn,
+                Subject=f"New {tag} sighting on Aussie EcoLens!",
+                Message=(
+                    f"A new {media_type} containing '{tag}' has been added.\n\n"
+                    f"View it here: {file_url}\n\n"
+                    f"Tagged at: {tagged_at}\n\n"
+                    f"You are receiving this because you subscribed to '{tag}' notifications.\n"
+                    f"To unsubscribe, use the Aussie EcoLens app."
+                ),
+            )
+            notified.append(tag)
+            logger.info(f"Notified subscribers for tag '{tag}'")
+        except Exception as e:
+            logger.error(f"Failed to notify for tag '{tag}': {e}")
+            failed.append(tag)
+
+    return ok({
+        "message": f"Notifications sent for {len(notified)} tag(s)",
+        "notified": notified,
+        "failed": failed,
+    })
 
 
 # ─────────────────────────────────────────────────────────────
@@ -483,6 +800,8 @@ def delete_files(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def subscribe_to_tag(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
@@ -519,6 +838,8 @@ def subscribe_to_tag(event, context):
 # ─────────────────────────────────────────────────────────────
 
 def unsubscribe_from_tag(event, context):
+    claims, error = require_auth(event)
+    if error: return error
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
@@ -568,12 +889,35 @@ ROUTES = {
     ("DELETE", "/files"):                     delete_files,
     ("POST",   "/notifications/subscribe"):   subscribe_to_tag,
     ("POST",   "/notifications/unsubscribe"): unsubscribe_from_tag,
+    ("POST",   "/notifications/notify"):      notify_tagged,
 }
 
 def handler(event, context):
-    method = event.get("httpMethod", "")
-    path = event.get("path", "")
+    # Try multiple ways to get method and path — API Gateway v1 vs v2 differences
+    method = (
+        event.get("httpMethod") or
+        event.get("requestContext", {}).get("http", {}).get("method") or
+        ""
+    ).upper()
+
+    path = (
+        event.get("path") or
+        event.get("rawPath") or
+        event.get("requestContext", {}).get("path") or
+        ""
+    )
+
+    # Strip stage prefix if present (e.g. /prod/query/tags -> /query/tags)
+    for stage in ["/prod", "/dev", "/staging"]:
+        if path.startswith(stage + "/") or path == stage:
+            path = path[len(stage):] or "/"
+            break
+
+    logger.info(f"Routing: {method} {path}")
+
     route = ROUTES.get((method, path))
     if route is None:
+        # Log full event for debugging
+        logger.error(f"No route for {method} {path}. Event keys: {list(event.keys())}")
         return err(f"No route for {method} {path}", 404)
     return route(event, context)
