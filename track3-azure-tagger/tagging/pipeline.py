@@ -5,13 +5,14 @@ from tagging.real_pipeline import tag_local_image
 def tag_media_file(media_type: str, s3_url: str, frames: list) -> dict:
     """
     Track 3 tagging pipeline:
-    - downloads image/frame using presigned S3 URL
-    - runs SpeciesNet model
-    - returns species tag counts
+    - downloads image/frame using presigned S3 URLs
+    - runs the tagging model pipeline from real_pipeline.py
+    - returns normalised common-name species tag counts
 
-    Current mode:
-    - MegaDetector is optional.
-    - If MegaDetector is unavailable, the full image is classified.
+    real_pipeline.py handles:
+    - MegaDetector if available
+    - full-image fallback if MegaDetector is unavailable
+    - scientific-name to common-name mapping
     """
 
     if media_type == "image":
@@ -26,7 +27,7 @@ def tag_media_file(media_type: str, s3_url: str, frames: list) -> dict:
         combined_tags = {}
 
         for frame in frames:
-            frame_url = frame.get("s3_url")
+            frame_url = frame.get("s3_url") or frame.get("frame_url") or frame.get("url")
             if not frame_url:
                 continue
 
