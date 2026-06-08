@@ -99,8 +99,11 @@
 <body>
 
 <header>
-  <div class="logo"><span class="logo-dot"></span>Aussie EcoLens</div>
+  <a href="index.html" class="logo" style="text-decoration:none;color:inherit"><span class="logo-dot"></span>Aussie EcoLens</a>
   <nav>
+    <a href="index.html" style="background:none;border:none;padding:6px 14px;border-radius:8px;font-family:'Instrument Sans',sans-serif;font-size:14px;color:var(--text-muted);cursor:pointer;transition:all 0.15s;text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.background='var(--surface2)';this.style.color='var(--text)'" onmouseout="this.style.background='none';this.style.color='var(--text-muted)'">← Dashboard</a>
+    <a href="upload.html" style="background:none;border:none;padding:6px 14px;border-radius:8px;font-family:'Instrument Sans',sans-serif;font-size:14px;color:var(--text-muted);cursor:pointer;transition:all 0.15s;text-decoration:none;display:inline-flex;align-items:center;gap:4px" onmouseover="this.style.background='var(--surface2)';this.style.color='var(--text)'" onmouseout="this.style.background='none';this.style.color='var(--text-muted)'">⬆ Upload</a>
+    <span style="display:inline-block;width:1px;height:20px;background:var(--border);margin:0 6px"></span>
     <button class="active" onclick="showPage('search', this)">Search</button>
     <button onclick="showPage('thumbnail', this)">Thumbnail</button>
     <button onclick="showPage('upload', this)">By File</button>
@@ -115,7 +118,7 @@
 
   <!-- Auth banner -->
   <div class="auth-banner" id="authBanner">
-    ⚠ No auth token set — go to <strong>⚙ Auth</strong> tab and paste your Cognito token.
+    ⚠ Your session has expired. <a href="login.html" style="color:inherit;font-weight:600;text-decoration:underline">Sign in again</a> to continue.
   </div>
 
   <!-- ══ PAGE: Settings / Auth ══ -->
@@ -214,7 +217,7 @@
         <span id="fileSpinner" class="spinner" style="display:none"></span>
         Detect &amp; search
       </button>
-      <p style="font-size:12px;color:var(--text-muted);margin-top:8px">⚠ First call may take 2–3 minutes while the ML model loads.</p>
+      <p style="font-size:12px;color:var(--text-muted);margin-top:8px">ℹ The ML model warms up on first call. Subsequent searches are near-instant.</p>
       <div class="status-msg" id="fileStatus"></div>
       <div id="fileResults" style="display:none;margin-top:1rem">
         <div style="margin-bottom:0.75rem">
@@ -318,6 +321,10 @@ const SPECIES = [
 
 // ── Auth ──────────────────────────────────────────────────────
 let authToken = sessionStorage.getItem('ecolens_id_token') || '';
+if (!authToken) {
+  // Redirect to login if there's no token at all
+  window.location.href = 'login.html';
+}
 
 function saveToken() {
   authToken = document.getElementById('tokenInput').value.trim();
@@ -378,6 +385,17 @@ window.addEventListener('DOMContentLoaded', () => {
     btn.onclick = () => btn.classList.toggle('selected');
     grid.appendChild(btn);
   });
+
+  // Pre-fill search if URL hash includes #search=<species>
+  const hash = window.location.hash || '';
+  const m = hash.match(/search=([^&]+)/);
+  if (m) {
+    const species = decodeURIComponent(m[1]);
+    tags[species.toLowerCase()] = 1;
+    renderTags();
+    // Auto-trigger the search
+    setTimeout(searchByTags, 100);
+  }
 });
 
 // ── Navigation ────────────────────────────────────────────────
@@ -584,7 +602,7 @@ async function compressImage(file, maxSizeKB = 2048) {
 async function searchByFile() {
   const file = document.getElementById('fileInput').files[0];
   if (!file) { showStatus('fileStatus', 'Select a file first.', 'error'); return; }
-  showStatus('fileStatus', 'Running ML model… first call may take 2–3 minutes.', 'loading');
+  showStatus('fileStatus', 'Running ML model on your file…', 'loading');
   document.getElementById('fileSpinner').style.display = 'inline-block';
   try {
     const base64 = await compressImage(file);
