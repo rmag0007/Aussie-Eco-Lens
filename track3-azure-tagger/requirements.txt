@@ -13,3 +13,4 @@ pyyaml
 tqdm
 onnx==1.16.2
 onnx2torch
+megadetector
