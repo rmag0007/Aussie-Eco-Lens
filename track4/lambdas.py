@@ -115,15 +115,37 @@ def get_cosmos_container():
 def ok(body, status=200):
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+            "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        },
         "body": json.dumps(body),
     }
 
 def err(message, status=400):
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+            "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        },
         "body": json.dumps({"error": message}),
+    }
+
+def cors_preflight():
+    """Return 200 OK for OPTIONS preflight requests."""
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+            "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        },
+        "body": "",
     }
 
 def parse_body(event):
@@ -267,14 +289,6 @@ def generate_presigned_url(s3_bucket: str, s3_key: str, expiry: int = 3600) -> s
 def presign_record(record: dict) -> dict:
     """
     Generates fresh presigned URLs from permanently stored bucket/key fields.
-    
-    DB schema (permanent fields we use):
-      s3_bucket + s3_key           → full image or video
-      thumbnail_bucket + thumbnail_key → thumbnail image
-      frames[].s3_bucket + frames[].s3_key → video frames
-
-    We ignore s3_presigned_url_used_for_tagging and
-    thumbnail_presigned_url_used_for_tagging — those are expired.
     """
     # Full file presigned URL
     s3_bucket = record.get("s3_bucket")
@@ -309,15 +323,7 @@ def presign_record(record: dict) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def db_query_by_tags(tag_counts: dict) -> list:
-    """
-    Find all files where every requested tag meets the minimum count.
-    Fetches all tagged files then filters in Python — works around
-    Cosmos DB SQL limitations with dynamic keys in nested objects.
-    """
     container = get_cosmos_container()
-
-    # First get all tagged files that contain ALL the requested species
-    # Use ARRAY_CONTAINS on tag_list for initial filtering (fast index scan)
     species_conditions = " AND ".join(
         [f"ARRAY_CONTAINS(c.tag_list, @tag{i})"
          for i, tag in enumerate(tag_counts.keys())]
@@ -333,7 +339,6 @@ def db_query_by_tags(tag_counts: dict) -> list:
         enable_cross_partition_query=True
     ))
 
-    # Then filter in Python for count requirements
     results = []
     for item in items:
         item_tags = item.get("tags", {})
@@ -343,10 +348,6 @@ def db_query_by_tags(tag_counts: dict) -> list:
 
 
 def db_query_by_species(species_list: list) -> list:
-    """
-    Find all files containing all listed species (AND logic).
-    Uses tag_list array field with parameterized queries.
-    """
     container = get_cosmos_container()
     conditions = " AND ".join(
         [f"ARRAY_CONTAINS(c.tag_list, @sp{i})" for i, _ in enumerate(species_list)]
@@ -360,10 +361,6 @@ def db_query_by_species(species_list: list) -> list:
 
 
 def db_get_by_thumbnail_key(thumbnail_key: str):
-    """
-    Look up a record by thumbnail_key.
-    Selects s3_bucket+s3_key (full file) and thumbnail_bucket+thumbnail_key.
-    """
     container = get_cosmos_container()
     query = """SELECT c.s3_bucket, c.s3_key, c.thumbnail_bucket,
                       c.thumbnail_key, c.file_id, c.owner_sub,
@@ -377,15 +374,7 @@ def db_get_by_thumbnail_key(thumbnail_key: str):
 
 
 def db_update_tags(s3_url: str, tags: list, operation: int) -> bool:
-    """
-    Add (operation=1) or remove (operation=0) tags from a record.
-    Keeps both 'tags' (dict with counts) and 'tag_list' (array) in sync.
-    Partition key is owner_sub — must fetch full record first.
-    Returns True if record found and updated.
-    """
     container = get_cosmos_container()
-
-    # Search by s3_key (permanent field) not s3_url (not stored)
     query = "SELECT * FROM c WHERE c.s3_key = @url OR c.file_id = @url"
     params = [{"name": "@url", "value": s3_url}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
@@ -418,14 +407,7 @@ def db_update_tags(s3_url: str, tags: list, operation: int) -> bool:
 
 
 def db_delete_record(file_id: str) -> bool:
-    """
-    Delete the Cosmos DB record by file_id or s3_key.
-    Partition key is owner_sub.
-    Returns True if found and deleted.
-    """
     container = get_cosmos_container()
-
-    # Try by file_id first, then s3_key
     query = "SELECT c.id, c.file_id, c.owner_sub FROM c WHERE c.file_id = @id OR c.s3_key = @id"
     params = [{"name": "@id", "value": file_id}]
     items = list(container.query_items(query=query, parameters=params, enable_cross_partition_query=True))
@@ -457,11 +439,6 @@ def get_or_create_topic_arn(tag: str) -> str:
 
 
 def publish_tag_notification(tags: list, file_url: str):
-    """
-    Call this whenever a new file is confirmed tagged.
-    Notifies all SNS subscribers for each detected tag.
-    Your teammate's tagging Lambda should call this, or you hook into their S3 event.
-    """
     for tag in tags:
         try:
             topic_arn = get_or_create_topic_arn(tag)
@@ -481,8 +458,6 @@ def publish_tag_notification(tags: list, file_url: str):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 1 — POST /query/tags
-# Find files by tag counts (logical AND)
-# Supports both count queries {"kangaroo": 2} and species queries {"dingo": 1}
 # ─────────────────────────────────────────────────────────────
 
 def query_by_tags(event, context):
@@ -506,7 +481,6 @@ def query_by_tags(event, context):
         logger.error(f"Cosmos error in query_by_tags: {e}")
         return err("Database error", 500)
 
-    # Generate fresh presigned URLs from stored bucket/key values
     thumbnails = []
     videos = []
     for r in matches:
@@ -521,26 +495,20 @@ def query_by_tags(event, context):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 2 — GET /query/thumbnail
-# Find full-size image URL from thumbnail URL
 # ─────────────────────────────────────────────────────────────
 
 def query_by_thumbnail(event, context):
     claims, error = require_auth(event)
     if error: return error
     params = event.get("queryStringParameters") or {}
-    # Accept thumbnail_key directly, or extract key from a presigned/S3 URL
     thumbnail_key = params.get("thumbnail_key", "").strip()
     thumbnail_url = params.get("thumbnail_url", "").strip()
 
-    # If given a URL, try to extract the key from it
     if not thumbnail_key and thumbnail_url:
-        # Handle both presigned URLs and s3:// URIs
         if "amazonaws.com" in thumbnail_url:
-            # Extract key from presigned URL path
             from urllib.parse import urlparse, unquote
             parsed = urlparse(thumbnail_url)
             thumbnail_key = unquote(parsed.path.lstrip("/"))
-            # Remove bucket prefix if present in path-style URL
             parts = thumbnail_key.split("/", 1)
             if len(parts) == 2 and "." not in parts[0]:
                 thumbnail_key = parts[1]
@@ -570,7 +538,6 @@ def query_by_thumbnail(event, context):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 3 — POST /query/file
-# Find matching files by uploading a query file (transient — NOT stored)
 # ─────────────────────────────────────────────────────────────
 
 def query_by_file(event, context):
@@ -578,8 +545,8 @@ def query_by_file(event, context):
     if error: return error
     import base64
     import sys
-    ensure_torch()  # install torch if not present
-    sys.path.insert(0, "/tmp/pypackages")  # make sure installed packages are on path
+    ensure_torch()
+    sys.path.insert(0, "/tmp/pypackages")
     from ml_inference import run_ml_model_on_file
 
     body = event.get("body", "")
@@ -589,10 +556,19 @@ def query_by_file(event, context):
         return err("No file provided")
 
     try:
-        raw_bytes = base64.b64decode(body) if is_base64 else body.encode()
+        # Strip data URL prefix if present
+        if isinstance(body, str) and body.startswith("data:") and "," in body:
+            body = body.split(",", 1)[1]
+        # First decode
+        raw_bytes = base64.b64decode(body)
+        # API Gateway double-encodes when browser sends base64 as text body
+        # If first bytes are b'/9j' that's the base64 of a JPEG magic header — decode again
+        if raw_bytes[:3] == b'/9j' or raw_bytes[:4] == b'iVBO':
+            raw_bytes = base64.b64decode(raw_bytes)
     except Exception:
         return err("Could not decode request body")
 
+    logger.info(f"Decoded: length={len(raw_bytes)}, first4={raw_bytes[:4].hex()}, isBase64={is_base64}")
     content_type = (event.get("headers") or {}).get("content-type", "")
     file_type = "video" if "video" in content_type else "image"
 
@@ -607,7 +583,6 @@ def query_by_file(event, context):
     if not detected_tags:
         return ok({"detected_tags": [], "thumbnails": [], "videos": []})
 
-    # Query DB for files with count >= 1 for each detected tag
     tag_counts = {tag: 1 for tag in detected_tags}
 
     try:
@@ -634,7 +609,6 @@ def query_by_file(event, context):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 4 — POST /tags/bulk
-# Add or remove tags from multiple files
 # ─────────────────────────────────────────────────────────────
 
 def bulk_tag_update(event, context):
@@ -676,7 +650,6 @@ def bulk_tag_update(event, context):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 5 — DELETE /files
-# Delete DB records (your side — teammate handles S3 deletion)
 # ─────────────────────────────────────────────────────────────
 
 def delete_files(event, context):
@@ -690,7 +663,6 @@ def delete_files(event, context):
     if not file_ids or not isinstance(file_ids, list):
         return err("'file_ids' must be a non-empty list")
 
-    # ── Step 1: Call Track 1's storage delete Lambda ──────────
     storage_deleted = []
     storage_failed = []
 
@@ -707,12 +679,10 @@ def delete_files(event, context):
         logger.info(f"Storage delete: deleted={storage_deleted}, failed={storage_failed}")
     except Exception as e:
         logger.error(f"Failed to invoke storage delete Lambda: {e}")
-        # If storage Lambda fails, don't delete DB records
         return err(f"Storage deletion failed: {str(e)}", 500)
 
-    # ── Step 2: Delete DB records for successfully deleted files ──
     deleted = []
-    failed = list(storage_failed)  # start with storage failures
+    failed = list(storage_failed)
 
     for file_id in storage_deleted:
         try:
@@ -720,7 +690,6 @@ def delete_files(event, context):
             if found:
                 deleted.append(file_id)
             else:
-                # Storage deleted but no DB record — still count as deleted
                 deleted.append(file_id)
                 logger.warning(f"No DB record found for {file_id} — storage was deleted")
         except Exception as e:
@@ -735,16 +704,9 @@ def delete_files(event, context):
 
 # ─────────────────────────────────────────────────────────────
 # HANDLER 6c — POST /notifications/notify
-# Called by Track 3 tagging Lambda after a file is tagged
-# No user auth required — internal service call
 # ─────────────────────────────────────────────────────────────
 
 def notify_tagged(event, context):
-    """
-    Called by Track 3 after tagging is complete.
-    Publishes SNS notifications to all subscribers of each detected tag.
-    Does NOT require Cognito auth — internal service endpoint.
-    """
     body = parse_body(event)
     if body is None:
         return err("Invalid JSON body")
@@ -759,7 +721,6 @@ def notify_tagged(event, context):
     if not tag_list:
         return ok({"message": "No tags to notify", "notified": []})
 
-    # Generate a presigned URL for the notification email
     if s3_bucket and s3_key:
         file_url = generate_presigned_url(s3_bucket, s3_key)
     else:
@@ -882,6 +843,7 @@ def unsubscribe_from_tag(event, context):
 # ─────────────────────────────────────────────────────────────
 
 ROUTES = {
+    # Real routes
     ("POST",   "/query/tags"):                query_by_tags,
     ("GET",    "/query/thumbnail"):           query_by_thumbnail,
     ("POST",   "/query/file"):                query_by_file,
@@ -890,10 +852,18 @@ ROUTES = {
     ("POST",   "/notifications/subscribe"):   subscribe_to_tag,
     ("POST",   "/notifications/unsubscribe"): unsubscribe_from_tag,
     ("POST",   "/notifications/notify"):      notify_tagged,
+    # OPTIONS preflight handlers (CORS)
+    ("OPTIONS", "/query/tags"):               lambda e, c: cors_preflight(),
+    ("OPTIONS", "/query/thumbnail"):          lambda e, c: cors_preflight(),
+    ("OPTIONS", "/query/file"):               lambda e, c: cors_preflight(),
+    ("OPTIONS", "/tags/bulk"):                lambda e, c: cors_preflight(),
+    ("OPTIONS", "/files"):                    lambda e, c: cors_preflight(),
+    ("OPTIONS", "/notifications/subscribe"):  lambda e, c: cors_preflight(),
+    ("OPTIONS", "/notifications/unsubscribe"):lambda e, c: cors_preflight(),
+    ("OPTIONS", "/notifications/notify"):     lambda e, c: cors_preflight(),
 }
 
 def handler(event, context):
-    # Try multiple ways to get method and path — API Gateway v1 vs v2 differences
     method = (
         event.get("httpMethod") or
         event.get("requestContext", {}).get("http", {}).get("method") or
@@ -917,7 +887,6 @@ def handler(event, context):
 
     route = ROUTES.get((method, path))
     if route is None:
-        # Log full event for debugging
         logger.error(f"No route for {method} {path}. Event keys: {list(event.keys())}")
         return err(f"No route for {method} {path}", 404)
     return route(event, context)

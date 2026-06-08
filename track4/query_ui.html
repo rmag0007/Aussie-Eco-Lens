@@ -531,13 +531,62 @@ function previewFile() {
   }
 }
 
+async function compressImage(file, maxSizeKB = 2048) {
+  // If file is small enough or is a video, return as-is base64
+  if (file.size / 1024 <= maxSizeKB || file.type.startsWith('video/')) {
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  // Compress via canvas
+  return await new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+      // Scale down if needed
+      const maxDim = 1920;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      // Try quality 0.85 first, reduce if still too big
+      let quality = 0.85;
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      while (dataUrl.length * 0.75 > maxSizeKB * 1024 && quality > 0.3) {
+        quality -= 0.1;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+      }
+      resolve(dataUrl.split(',')[1]);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 async function searchByFile() {
   const file = document.getElementById('fileInput').files[0];
   if (!file) { showStatus('fileStatus', 'Select a file first.', 'error'); return; }
   showStatus('fileStatus', 'Running ML model… first call may take 2–3 minutes.', 'loading');
   document.getElementById('fileSpinner').style.display = 'inline-block';
   try {
-    const data = await apiCall('/query/file', 'POST', file, true, true);
+    const base64 = await compressImage(file);
+    const res = await fetch(API_BASE + '/query/file', {
+      method: 'POST',
+      headers: { ...getHeaders(true), 'Content-Type': file.type.startsWith('video/') ? file.type : 'image/jpeg' },
+      body: base64,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || JSON.stringify(data));
     hideStatus('fileStatus');
     document.getElementById('detectedTags').textContent = (data.detected_tags || []).join(', ') || 'none';
     document.getElementById('fileResults').style.display = 'block';
