@@ -14,7 +14,6 @@
 | AWS Cognito | JWT token verification (cross-account, Track 2) |
 | Azure Cosmos DB | File metadata storage (cross-cloud, Track 3) |
 | AWS S3 (cross-account) | Presigned URL generation for Track 1's buckets |
-| AWS EventBridge | Warmup rule every 5 min to keep Lambda warm |
 
 ---
 
