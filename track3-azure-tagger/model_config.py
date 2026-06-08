@@ -1,13 +1,15 @@
 import os
 
+MODEL_DIR = os.environ.get("MODEL_DIR", "/tmp/models")
+
 MEGADETECTOR_MODEL_PATH = os.environ.get(
     "MEGADETECTOR_MODEL_PATH",
-    "models/mdv5a.pt"
+    f"{MODEL_DIR}/mdv5a.pt"
 )
 
 SPECIES_MODEL_PATH = os.environ.get(
     "SPECIES_MODEL_PATH",
-    "models/model.pt"
+    f"{MODEL_DIR}/model.pt"
 )
 
 MODEL_VERSION = os.environ.get(

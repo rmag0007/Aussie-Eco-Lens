@@ -20,7 +20,7 @@ def validate_upload_event(event: dict) -> None:
 
     if event["media_type"] == "image":
         if not event.get("thumbnail_url"):
-            raise ValueError("Image events must include thumbnail_url")
+            raise ValueError("Warning: image event has no thumbnail_url; continuing for integration testing.")
 
     if event["media_type"] == "video":
         if "frames" not in event:

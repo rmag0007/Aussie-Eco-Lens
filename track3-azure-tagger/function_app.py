@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 
 import azure.functions as func
@@ -8,25 +9,37 @@ from database.cosmos_db import save_file_record
 from tagging.pipeline import tag_media_file
 from validation import validate_upload_event
 from notifications import notify_file_tagged
+import azure.functions as func
 
 app = func.FunctionApp()
 
 
-@app.route(route="tag-upload", methods=["POST"])
+@app.route(route="tag-upload", methods=["POST"],auth_level=func.AuthLevel.ANONYMOUS)
 def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
     try:
         # TEMPORARY DEV AUTH BYPASS
         # Used only while Track 2 Cognito integration is pending.
         # Before final integration, replace this with:
-        # user = get_user_from_request(req.headers)
-        # token_owner_sub = user["sub"]
-        # owner_email = user.get("email")
-        token_owner_sub = "test-user-123"
-        owner_email = "test@example.com"
+# user = get_user_from_request(req.headers)
+# token_owner_sub = user["sub"]
+#       owner_email = user.get("email")
+        # token_owner_sub = "test-user-123"
+        # owner_email = "test@example.com"
         
         # 2. Read Track 1 upload event
         event = req.get_json()
         validate_upload_event(event)
+
+        auth_bypass = os.environ.get("AUTH_BYPASS", "false").lower() == "true"
+
+        if auth_bypass:
+            # DEV/INTEGRATION TESTING ONLY
+            token_owner_sub = event.get("owner_sub")
+            owner_email = event.get("owner_email", "test@example.com")
+        else:
+            user = get_user_from_request(req.headers)
+            token_owner_sub = user["sub"]
+            owner_email = user.get("email")
 
         file_id = event["file_id"]
         owner_sub = event.get("owner_sub", token_owner_sub)
@@ -131,10 +144,10 @@ def tag_upload(req: func.HttpRequest) -> func.HttpResponse:
     except ValueError as e:
         return func.HttpResponse(
             json.dumps({
-                "status": "unauthorised",
+                "status": "bad_request",
                 "message": str(e)
             }),
-            status_code=401,
+            status_code=400,
             mimetype="application/json"
         )
 

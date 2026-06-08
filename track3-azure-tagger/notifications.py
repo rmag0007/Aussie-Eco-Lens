@@ -2,29 +2,22 @@ import os
 import requests
 
 
-TRACK4_NOTIFY_ENDPOINT = os.environ.get("TRACK4_NOTIFY_ENDPOINT", "")
+TRACK4_NOTIFY_ENDPOINT = os.environ.get(
+    "TRACK4_NOTIFY_ENDPOINT",
+    "https://pjt56rikpk.execute-api.ap-southeast-2.amazonaws.com/prod/notifications/notify"
+)
 
 
 def notify_file_tagged(record: dict) -> dict:
     """
-    Calls Track 4's notify endpoint after Track 3 tags a file.
-
-    If TRACK4_NOTIFY_ENDPOINT is not set, notification is skipped.
-    This allows local testing without Track 4 being ready.
+    Notify Track 4 after a file has been tagged and saved to Cosmos DB.
+    Track 4 handles subscriptions and email/SNS delivery.
     """
-
-    if not TRACK4_NOTIFY_ENDPOINT:
-        print("TRACK4_NOTIFY_ENDPOINT not set. Skipping notification.")
-        return {
-            "status": "skipped",
-            "reason": "TRACK4_NOTIFY_ENDPOINT not configured"
-        }
 
     payload = {
         "event_type": "file_tagged",
         "file_id": record["file_id"],
         "owner_sub": record["owner_sub"],
-        "owner_email": record.get("owner_email"),
         "media_type": record["media_type"],
         "tags": record["tags"],
         "tag_list": record["tag_list"],
@@ -35,18 +28,28 @@ def notify_file_tagged(record: dict) -> dict:
         "tagged_at": record.get("tagged_at")
     }
 
-    response = requests.post(
-        TRACK4_NOTIFY_ENDPOINT,
-        json=payload,
-        timeout=10
-    )
-
-    response.raise_for_status()
-
     try:
-        return response.json()
-    except Exception:
+        response = requests.post(
+            TRACK4_NOTIFY_ENDPOINT,
+            json=payload,
+            headers={
+                "Content-Type": "application/json"
+            },
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        try:
+            return response.json()
+        except Exception:
+            return {
+                "message": "Notification request sent",
+                "raw_response": response.text
+            }
+
+    except requests.RequestException as e:
         return {
-            "status": "sent",
-            "raw_response": response.text
+            "message": "Notification request failed",
+            "error": str(e)
         }

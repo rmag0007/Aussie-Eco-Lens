@@ -1,6 +1,6 @@
 from pathlib import Path
 from collections import Counter
-
+from model_loader import ensure_models_downloaded
 from PIL import Image
 import numpy as np
 import torch
@@ -54,7 +54,8 @@ COMMON_NAMES = {
     "Vulpes_vulpes": "red fox",
     "Felis_catus": "domestic cat",
     "Gymnorhina_tibicen": "australian magpie",
-    "Dacelo_novaeguineae": "laughing kookaburra"
+    "Dacelo_novaeguineae": "laughing kookaburra",
+    "Megapodius_reinwardt": "orange-footed scrubfowl"
 }
 
 
@@ -75,7 +76,6 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-
 def load_species_model():
     """
     Load SpeciesNet model once and reuse it.
@@ -83,6 +83,8 @@ def load_species_model():
     global _species_model
 
     if _species_model is None:
+        ensure_models_downloaded()
+
         model = torch.load(
             SPECIES_MODEL_PATH,
             map_location=DEVICE,
@@ -94,7 +96,7 @@ def load_species_model():
 
     return _species_model
 
-def crop_animal_detections(image_path: str, output_dir: str = "tmp/crops") -> list[str]:
+def crop_animal_detections(image_path: str, output_dir: str = "/tmp/crops") -> list[str]:
     """
     Run MegaDetector if available.
     If MegaDetector is not installed yet, fall back to classifying the full image.
@@ -104,6 +106,8 @@ def crop_animal_detections(image_path: str, output_dir: str = "tmp/crops") -> li
     if not MEGADETECTOR_AVAILABLE:
         print("MegaDetector not available yet. Using full image as fallback.")
         return [image_path]
+
+    ensure_models_downloaded()
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)

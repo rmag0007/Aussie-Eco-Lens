@@ -1,13 +1,15 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 azure-functions
 azure-cosmos
+azure-storage-blob
 python-jose[cryptography]
 requests
 pillow
-numpy
-torch
-torchvision
+numpy==1.26.4
+torch==2.6.0+cpu
+torchvision==0.21.0+cpu
 pyyaml
 tqdm
 onnx==1.16.2
 onnx2torch
-megadetector

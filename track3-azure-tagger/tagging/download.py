@@ -2,16 +2,13 @@ from pathlib import Path
 import requests
 
 
-def download_presigned_url(url: str, output_path: str, timeout: int = 30) -> str:
-    """
-    Downloads an image/video frame from a presigned S3 URL.
-    No AWS credentials needed.
-    """
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
+def download_presigned_url(url: str, output_path: str) -> str:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    response = requests.get(url, timeout=timeout)
+    response = requests.get(url, timeout=30)
     response.raise_for_status()
 
-    output.write_bytes(response.content)
-    return str(output)
+    with open(output_path, "wb") as f:
+        f.write(response.content)
+
+    return output_path

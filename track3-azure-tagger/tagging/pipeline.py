@@ -17,7 +17,7 @@ def tag_media_file(media_type: str, s3_url: str, frames: list) -> dict:
     if media_type == "image":
         local_path = download_presigned_url(
             url=s3_url,
-            output_path="tmp/current_image.jpg"
+            output_path="/tmp/current_image.jpg"
         )
 
         return tag_local_image(local_path)
@@ -34,7 +34,7 @@ def tag_media_file(media_type: str, s3_url: str, frames: list) -> dict:
 
             local_path = download_presigned_url(
                 url=frame_url,
-                output_path=f"tmp/frame_{second}.jpg"
+                output_path=f"/tmp/frame_{second}.jpg"
             )
 
             frame_tags = tag_local_image(local_path)
