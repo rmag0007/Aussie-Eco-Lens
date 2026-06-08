@@ -106,9 +106,9 @@
     <button onclick="showPage('upload', this)">By File</button>
     <button onclick="showPage('manage', this)">Manage</button>
     <button onclick="showPage('notify', this)">Alerts</button>
-    <button onclick="showPage('settings', this)">⚙ Auth</button>
+    <button onclick="showPage('settings', this)" style="display:none">⚙ Auth</button>
   </nav>
-  <div class="avatar">AK</div>
+  <div class="avatar" id="userAvatar">AK</div>
 </header>
 
 <div class="container">
@@ -317,18 +317,18 @@ const SPECIES = [
 ];
 
 // ── Auth ──────────────────────────────────────────────────────
-let authToken = sessionStorage.getItem('ecolens_token') || '';
+let authToken = sessionStorage.getItem('ecolens_id_token') || '';
 
 function saveToken() {
   authToken = document.getElementById('tokenInput').value.trim();
-  sessionStorage.setItem('ecolens_token', authToken);
+  sessionStorage.setItem('ecolens_id_token', authToken);
   updateAuthBanner();
   showStatus('tokenStatus', 'Token saved for this session.', 'success');
 }
 
 function clearToken() {
   authToken = '';
-  sessionStorage.removeItem('ecolens_token');
+  sessionStorage.removeItem('ecolens_id_token');
   document.getElementById('tokenInput').value = '';
   updateAuthBanner();
   showStatus('tokenStatus', 'Token cleared.', 'error');
@@ -356,6 +356,14 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('tokenInput').value = authToken;
   }
   updateAuthBanner();
+
+  // Show user email/initial from login
+  const userEmail = sessionStorage.getItem('ecolens_email') || '';
+  const avatar = document.getElementById('userAvatar');
+  if (avatar && userEmail) {
+    avatar.textContent = userEmail[0].toUpperCase();
+    avatar.title = userEmail;
+  }
 
   // Species datalist
   const dl = document.getElementById('speciesList');
