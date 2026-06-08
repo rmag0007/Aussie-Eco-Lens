@@ -56,6 +56,55 @@
     .message.loading { background: #fdf3e3; color: #b8620a; border: 1px solid #f0c97a; display: block; }
 
     .info-card { background: var(--mist); border-left: 3px solid var(--green); border-radius: 8px; padding: 14px 16px; font-size: 0.85rem; color: #555; line-height: 1.6; margin-bottom: 24px; }
+
+    /* Upload progress bar */
+    .progress-wrap { display: none; background: #fff; border: 1px solid #eee; border-radius: 8px; padding: 16px; margin-top: 12px; }
+    .progress-wrap.show { display: block; }
+    .progress-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+    .progress-bar-bg { background: #eee; height: 8px; border-radius: 4px; overflow: hidden; }
+    .progress-bar-fill { background: var(--green); height: 100%; width: 0%; transition: width 0.2s ease; }
+
+    /* Result card after upload */
+    .result-card { display: none; background: #fff; border: 1px solid #d4e6dc; border-radius: 12px; padding: 20px; margin-top: 20px; }
+    .result-card.show { display: block; }
+    .tags-display { background: var(--mist); border-radius: 8px; padding: 12px; margin: 12px 0; }
+    .tags-display .tags-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .tags-display .tag-pill { display: inline-block; background: var(--green); color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 0.85rem; margin: 2px 4px 2px 0; }
+    .tags-display .tag-pill .count { opacity: 0.7; font-size: 0.75rem; margin-left: 4px; }
+    .tags-display.empty { background: #fff5e6; }
+    .tags-display.empty .tags-label { color: #b8620a; }
+    .result-header { display: flex; gap: 14px; align-items: center; margin-bottom: 16px; }
+    .result-thumb { width: 80px; height: 80px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: #f3efe5; }
+    .result-title { flex: 1; }
+    .result-title h3 { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: var(--bark); margin-bottom: 4px; }
+    .result-title .file-name { font-size: 0.85rem; color: var(--text-muted); word-break: break-all; }
+    .file-id-pill { display: inline-block; background: var(--mist); color: var(--green); font-family: monospace; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; margin-top: 4px; }
+    .pipeline-steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+    .pipeline-step { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; }
+    .step-icon { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; flex-shrink: 0; }
+    .step-icon.done { background: var(--success); color: white; }
+    .step-icon.pending { background: #f0c97a; color: white; }
+    .step-icon.waiting { background: #ddd; color: #888; }
+    .step-spinner { width: 14px; height: 14px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .step-label { color: var(--bark); }
+    .step-detail { color: var(--text-muted); font-size: 0.78rem; margin-left: 4px; }
+    .result-actions { display: flex; gap: 8px; }
+    .btn-secondary { flex: 1; padding: 10px; background: #fff; color: var(--green); border: 1px solid var(--green); border-radius: 8px; font-family: inherit; font-size: 0.9rem; cursor: pointer; text-align: center; text-decoration: none; }
+    .btn-secondary:hover { background: var(--mist); }
+
+    /* IDs & keys panel */
+    .keys-panel { background: #f9f6ef; border: 1px solid #e8e0d4; border-radius: 8px; padding: 14px 16px; margin-top: 12px; }
+    .keys-panel-title { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; font-weight: 600; }
+    .key-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #ede5d5; flex-wrap: wrap; }
+    .key-row:last-child { border-bottom: none; }
+    .key-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; min-width: 110px; }
+    .key-value { font-family: monospace; font-size: 0.78rem; color: var(--bark); flex: 1; min-width: 0; word-break: break-all; background: #fff; border: 1px solid #e0d7c4; padding: 4px 8px; border-radius: 4px; }
+    .key-copy { background: var(--green); color: #fff; border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.7rem; cursor: pointer; flex-shrink: 0; font-family: inherit; }
+    .key-copy:hover { background: #235c42; }
+    .key-copy.copied { background: var(--success); }
+    .key-open { background: #fff; color: var(--green); border: 1px solid var(--green); border-radius: 4px; padding: 4px 8px; font-size: 0.7rem; cursor: pointer; text-decoration: none; flex-shrink: 0; display: inline-block; }
+    .key-open:hover { background: var(--mist); }
   </style>
 </head>
 <body>
@@ -97,6 +146,91 @@
 
   <button class="btn" id="uploadBtn" onclick="doUpload()" disabled>Upload file</button>
   <div class="message" id="msg"></div>
+
+  <!-- Upload progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label">
+      <span id="progressText">Uploading to S3…</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+  </div>
+
+  <!-- Upload result panel (shown after success) -->
+  <div class="result-card" id="resultCard">
+    <div class="result-header">
+      <img id="resultThumb" class="result-thumb" alt="uploaded preview">
+      <div class="result-title">
+        <h3>Upload complete</h3>
+        <div class="file-name" id="resultFilename"></div>
+        <span class="file-id-pill" id="resultFileId">file_id: —</span>
+      </div>
+    </div>
+    <div class="pipeline-steps">
+      <div class="pipeline-step">
+        <div class="step-icon done">✓</div>
+        <span class="step-label">Uploaded to S3</span>
+        <span class="step-detail" id="stepUploadDetail"></span>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-icon done">✓</div>
+        <span class="step-label">SHA-256 deduplication checked</span>
+      </div>
+      <div class="pipeline-step" id="stepTagging">
+        <div class="step-icon pending"><div class="step-spinner"></div></div>
+        <span class="step-label">ML tagging</span>
+        <span class="step-detail">running cross-cloud on Azure…</span>
+      </div>
+      <div class="pipeline-step" id="stepIndexed">
+        <div class="step-icon waiting">·</div>
+        <span class="step-label">Indexed for queries</span>
+      </div>
+    </div>
+    <div class="tags-display" id="tagsDisplay" style="display:none">
+      <div class="tags-label" id="tagsLabel">Detected species</div>
+      <div id="tagsContent"></div>
+    </div>
+
+    <!-- IDs & storage keys: copy these into Query / Manage / Delete pages -->
+    <div class="keys-panel" id="keysPanel" style="display:none">
+      <div class="keys-panel-title">IDs &amp; storage keys (use these to test queries / bulk tagging / delete)</div>
+
+      <div class="key-row">
+        <span class="key-label">file_id</span>
+        <span class="key-value" id="keyFileId"></span>
+        <button class="key-copy" onclick="copyKey('keyFileId', this)">Copy</button>
+      </div>
+
+      <div class="key-row">
+        <span class="key-label">s3_key (raw)</span>
+        <span class="key-value" id="keyS3Key"></span>
+        <button class="key-copy" onclick="copyKey('keyS3Key', this)">Copy</button>
+        <a class="key-open" id="keyS3Open" href="#" target="_blank" rel="noopener">Open ↗</a>
+      </div>
+
+      <div class="key-row">
+        <span class="key-label">thumbnail_key</span>
+        <span class="key-value" id="keyThumbKey"></span>
+        <button class="key-copy" onclick="copyKey('keyThumbKey', this)">Copy</button>
+        <a class="key-open" id="keyThumbOpen" href="#" target="_blank" rel="noopener">Open ↗</a>
+      </div>
+
+      <div class="key-row">
+        <span class="key-label">raw bucket</span>
+        <span class="key-value" id="keyRawBucket"></span>
+      </div>
+
+      <div class="key-row">
+        <span class="key-label">thumb bucket</span>
+        <span class="key-value" id="keyThumbBucket"></span>
+      </div>
+    </div>
+
+    <div class="result-actions">
+      <a href="query.html" class="btn-secondary" id="searchBtn">🔍 Search by species</a>
+      <button class="btn-secondary" onclick="resetUpload()">⬆ Upload another</button>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -160,20 +294,204 @@
     catch { return {}; }
   }
 
+  function resetUpload() {
+    document.getElementById('resultCard').classList.remove('show');
+    document.getElementById('previewBox').style.display = 'none';
+    document.getElementById('progressWrap').classList.remove('show');
+    document.getElementById('msg').className = 'message';
+    document.getElementById('fileInput').value = '';
+    document.getElementById('keysPanel').style.display = 'none';
+    document.getElementById('tagsDisplay').style.display = 'none';
+    selectedFile = null;
+    fileChecksum = null;
+    document.getElementById('uploadBtn').disabled = true;
+  }
+
+  function setProgress(pct, text) {
+    const wrap = document.getElementById('progressWrap');
+    wrap.classList.add('show');
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+    if (text) document.getElementById('progressText').textContent = text;
+  }
+
+  function hideProgress() {
+    document.getElementById('progressWrap').classList.remove('show');
+  }
+
+  // Use XHR so we can get real upload progress events (fetch can't)
+  function putWithProgress(url, file) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setProgress(pct, 'Uploading to S3…');
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error('S3 PUT failed — ' + xhr.status));
+      };
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(file);
+    });
+  }
+
+  function showResultCard(fileId, file) {
+    document.getElementById('resultThumb').src = URL.createObjectURL(file);
+    document.getElementById('resultFilename').textContent = file.name + ' · ' + (file.size / 1024).toFixed(0) + ' KB';
+    document.getElementById('resultFileId').textContent = 'file_id: ' + fileId.slice(0, 13) + '…';
+    document.getElementById('stepUploadDetail').textContent = '· ' + (file.size / 1024).toFixed(0) + ' KB';
+    document.getElementById('resultCard').classList.add('show');
+
+    // Start polling for real tags from the upload-status endpoint
+    pollForTags(fileId, 0);
+  }
+
+  // Poll /upload-status/{file_id} until tagged or timeout (~60s)
+  async function pollForTags(fileId, attempt) {
+    const MAX_ATTEMPTS = 30;     // 30 * 2s = 60s max
+    const INTERVAL_MS = 2000;
+
+    try {
+      const res = await fetch(UPLOAD_API_BASE + '/upload-status/' + encodeURIComponent(fileId), {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Swap to server-generated thumbnail if available (proves pipeline ran)
+        if (data.thumbnail_url) {
+          document.getElementById('resultThumb').src = data.thumbnail_url;
+        }
+        // Populate the IDs & keys panel as soon as the fields are available
+        populateKeysPanel(data);
+        if (data.status === 'tagged') {
+          renderTags(data.tag_list || [], data.tags || {});
+          markTaggingDone(true);
+          return;
+        }
+        if (data.status && data.status.startsWith('tagger_http')) {
+          renderTags([], {}, data.status + (data.error_message ? ': ' + data.error_message.slice(0, 100) : ''));
+          markTaggingDone(false);
+          return;
+        }
+        if (data.status === 'tagger_error' || data.status === 'response_parse_error') {
+          renderTags([], {}, 'Tagger pipeline error — try again later');
+          markTaggingDone(false);
+          return;
+        }
+        // status === "pending" → keep polling
+      }
+    } catch (e) {
+      console.warn('Poll error:', e);
+    }
+
+    if (attempt + 1 >= MAX_ATTEMPTS) {
+      renderTags([], {}, 'Tagging is taking longer than expected — try Search manually');
+      markTaggingDone(false);
+      return;
+    }
+    setTimeout(() => pollForTags(fileId, attempt + 1), INTERVAL_MS);
+  }
+
+  function markTaggingDone(success) {
+    const tagging = document.getElementById('stepTagging');
+    tagging.querySelector('.step-icon').innerHTML = success ? '✓' : '!';
+    tagging.querySelector('.step-icon').className = 'step-icon ' + (success ? 'done' : 'waiting');
+    tagging.querySelector('.step-detail').textContent = success ? '· tags detected' : '· no tags';
+    const indexed = document.getElementById('stepIndexed');
+    indexed.querySelector('.step-icon').innerHTML = success ? '✓' : '·';
+    indexed.querySelector('.step-icon').className = 'step-icon ' + (success ? 'done' : 'waiting');
+  }
+
+  function populateKeysPanel(data) {
+    const panel = document.getElementById('keysPanel');
+    if (!data || !data.file_id) return;
+    panel.style.display = 'block';
+    document.getElementById('keyFileId').textContent = data.file_id;
+    document.getElementById('keyS3Key').textContent = data.s3_key || '—';
+    document.getElementById('keyThumbKey').textContent = data.thumbnail_key || '—';
+    document.getElementById('keyRawBucket').textContent = data.s3_bucket || '—';
+    document.getElementById('keyThumbBucket').textContent = data.thumbnail_bucket || '—';
+
+    const rawLink = document.getElementById('keyS3Open');
+    if (data.s3_url) {
+      rawLink.href = data.s3_url;
+      rawLink.style.display = 'inline-block';
+    } else {
+      rawLink.style.display = 'none';
+    }
+
+    const thumbLink = document.getElementById('keyThumbOpen');
+    if (data.thumbnail_url) {
+      thumbLink.href = data.thumbnail_url;
+      thumbLink.style.display = 'inline-block';
+    } else {
+      thumbLink.style.display = 'none';
+    }
+  }
+
+  function copyKey(elementId, btn) {
+    const text = document.getElementById(elementId).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const original = btn.textContent;
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('copied');
+      }, 1500);
+    });
+  }
+
+  function renderTags(tagList, tagsWithCounts, errorMsg) {
+    const wrap = document.getElementById('tagsDisplay');
+    const label = document.getElementById('tagsLabel');
+    const content = document.getElementById('tagsContent');
+    wrap.style.display = 'block';
+    if (errorMsg) {
+      wrap.classList.add('empty');
+      label.textContent = 'No tags detected';
+      content.textContent = errorMsg;
+      return;
+    }
+    if (!tagList.length) {
+      wrap.classList.add('empty');
+      label.textContent = 'No species detected';
+      content.textContent = 'The ML model did not find any known species in this file.';
+      return;
+    }
+    wrap.classList.remove('empty');
+    label.textContent = 'Detected species';
+    content.innerHTML = tagList.map(t => {
+      const count = tagsWithCounts[t];
+      return `<span class="tag-pill">${t}${count > 1 ? '<span class="count">×' + count + '</span>' : ''}</span>`;
+    }).join('');
+    // Update the "Search by species" button to pre-fill the first tag
+    const firstTag = tagList[0];
+    if (firstTag) {
+      document.getElementById('searchBtn').href = 'query.html#search=' + encodeURIComponent(firstTag);
+    }
+  }
+
   async function doUpload() {
     if (!selectedFile) return;
 
     const btn = document.getElementById('uploadBtn');
     const msg = document.getElementById('msg');
-
     btn.disabled = true; btn.textContent = 'Uploading…';
-    msg.textContent = 'Getting upload URL…';
+    msg.textContent = 'Requesting upload URL…';
     msg.className = 'message loading';
+    setProgress(0, 'Preparing upload…');
 
     try {
       const ownerSub = parseJwt(token).sub || '';
 
-      // Step 1 — Get presigned URL
+      // Step 1 — Get presigned URL (also runs server-side dedup check)
       const res = await fetch(UPLOAD_API_BASE + '/upload-url', {
         method: 'POST',
         headers: {
@@ -183,14 +501,16 @@
         body: JSON.stringify({
           filename: selectedFile.name,
           content_type: selectedFile.type,
-          owner_sub: ownerSub
+          owner_sub: ownerSub,
+          checksum: fileChecksum
         })
       });
 
       if (!res.ok) {
         const err = await res.json();
         if (res.status === 409 || err.duplicate) {
-          msg.textContent = '⚠ Duplicate file — this file already exists in the system.';
+          hideProgress();
+          msg.innerHTML = `⚠ <strong>Duplicate file detected</strong> — this image has already been uploaded.${err.existing_file_id ? ' (existing file_id: <code>' + err.existing_file_id.slice(0,8) + '…</code>)' : ''}`;
           msg.className = 'message error';
           return;
         }
@@ -199,22 +519,19 @@
 
       const { upload_url, file_id } = await res.json();
 
-      // Step 2 — PUT directly to S3
-      msg.textContent = 'Uploading file to storage…';
-      const putRes = await fetch(upload_url, {
-        method: 'PUT',
-        headers: { 'Content-Type': selectedFile.type },
-        body: selectedFile
-      });
+      // Step 2 — PUT directly to S3 with real progress
+      msg.textContent = 'Uploading…';
+      await putWithProgress(upload_url, selectedFile);
+      setProgress(100, 'Upload complete');
 
-      if (!putRes.ok) throw new Error('Upload to S3 failed — ' + putRes.status);
-
-      msg.textContent = '✅ Upload successful! ML tagging has been triggered automatically.';
+      msg.innerHTML = `✅ Uploaded · ML tagging running in the background.`;
       msg.className = 'message success';
-      selectedFile = null;
-      fileChecksum = null;
+
+      // Show the rich result card with pipeline indicators
+      showResultCard(file_id, selectedFile);
 
     } catch (e) {
+      hideProgress();
       msg.textContent = 'Error: ' + e.message;
       msg.className = 'message error';
     } finally {
