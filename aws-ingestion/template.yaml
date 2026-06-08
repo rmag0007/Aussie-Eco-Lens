@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Aussie EcoLens - Track 1 AWS Ingestion Core
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime: python3.11
+    Architectures: [x86_64]
+
+Parameters:
+  Suffix:
+    Type: String
+    Description: Globally-unique suffix for bucket names (e.g. slee4827)
+  LabRoleArn:
+    Type: String
+    Description: ARN of the pre-baked LabRole from AWS Academy
+  Track4AccountId:
+    Type: String
+    Default: "267451756103"
+    Description: Track 4 AWS account ID (cross-account access for queries + transient uploads)
+
+Resources:
+
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ecolens-raw-${Suffix}
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST, HEAD]
+            AllowedOrigins: ["*"]
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt IngestTriggerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+  ThumbsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ecolens-thumbs-${Suffix}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FramesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ecolens-frames-${Suffix}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  QueryTmpBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ecolens-query-tmp-${Suffix}
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-query-uploads
+            Status: Enabled
+            ExpirationInDays: 1
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------- BUCKET POLICIES: GRANT TRACK 4 CROSS-ACCOUNT ACCESS ----------
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-raw-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-raw-${Suffix}/*
+
+  ThumbsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ThumbsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-thumbs-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-thumbs-${Suffix}/*
+
+  FramesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FramesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-frames-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-frames-${Suffix}/*
+
+  QueryTmpBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref QueryTmpBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Track4ReadWriteAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${Track4AccountId}:root
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}
+              - !Sub arn:aws:s3:::ecolens-query-tmp-${Suffix}/*
+
+  FileChecksumsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: file_checksums
+      AttributeDefinitions:
+        - AttributeName: checksum
+          AttributeType: S
+        - AttributeName: file_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: checksum
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-file-id
+          KeySchema:
+            - AttributeName: file_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+
+  IngestTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-ingest-trigger
+      CodeUri: lambdas/ingest_trigger/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Environment:
+        Variables:
+          RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+          THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
+          FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
+          CHECKSUMS_TABLE: !Ref FileChecksumsTable
+          THUMBNAIL_FUNCTION_NAME: !Ref ThumbnailFunction
+          VIDEO_FRAMES_FUNCTION_NAME: !Ref VideoFramesFunction
+
+  IngestTriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt IngestTriggerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::ecolens-raw-${Suffix}
+
+  # ---------- LAMBDA: THUMBNAIL GENERATOR ----------
+  ThumbnailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-thumbnail
+      CodeUri: lambdas/thumbnail/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      MemorySize: 1024     # OpenCV decoding benefits from more RAM
+      Timeout: 60
+      # OpenCV is bundled directly in the deployment zip via requirements.txt.
+      # (AWS Academy SCP blocks cross-account Klayers layers.)
+      Environment:
+        Variables:
+          THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
+          THUMB_MAX_DIMENSION: "300"
+          THUMB_JPEG_QUALITY: "80"
+
+  # ---------- LAMBDA: VIDEO FRAME EXTRACTOR ----------
+  VideoFramesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-video-frames
+      CodeUri: lambdas/video_frames/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      MemorySize: 2048        # ffmpeg + frame buffering is RAM-hungry
+      Timeout: 300            # 5 min for longer videos
+      EphemeralStorage:
+        Size: 2048            # /tmp space (MB) — videos + frames can be large
+      Environment:
+        Variables:
+          FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
+
+  # ---------- LAMBDA: DELETE OBJECTS (called by Track 4) ----------
+  DeleteObjectsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-delete-objects
+      CodeUri: lambdas/delete_objects/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Timeout: 60
+      Environment:
+        Variables:
+          RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+          THUMBS_BUCKET: !Sub ecolens-thumbs-${Suffix}
+          FRAMES_BUCKET: !Sub ecolens-frames-${Suffix}
+          CHECKSUMS_TABLE: !Ref FileChecksumsTable
+
+  # Allow Track 4's account to invoke this Lambda cross-account
+  DeleteObjectsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt DeleteObjectsFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Ref Track4AccountId
+
+  # ---------- API GATEWAY (HTTP API) ----------
+  UploadApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [Content-Type, Authorization]
+
+  # ---------- LAMBDA: UPLOAD HANDLER ----------
+  UploadHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ecolens-upload-handler
+      CodeUri: lambdas/upload_handler/
+      Handler: app.lambda_handler
+      Role: !Ref LabRoleArn
+      Environment:
+        Variables:
+          RAW_BUCKET: !Sub ecolens-raw-${Suffix}
+      Events:
+        PostUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-url
+            Method: POST
+        OptionsUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref UploadApi
+            Path: /upload-url
+            Method: OPTIONS
+
+Outputs:
+  RawBucket:            { Value: !Ref RawBucket }
+  ThumbsBucket:         { Value: !Ref ThumbsBucket }
+  FramesBucket:         { Value: !Ref FramesBucket }
+  QueryTmpBucket:       { Value: !Ref QueryTmpBucket }
+  ChecksumsTable:       { Value: !Ref FileChecksumsTable }
+  IngestTriggerArn:     { Value: !GetAtt IngestTriggerFunction.Arn }
+  UploadHandlerArn:     { Value: !GetAtt UploadHandlerFunction.Arn }
+  ThumbnailFunctionArn: { Value: !GetAtt ThumbnailFunction.Arn }
+  VideoFramesFunctionArn: { Value: !GetAtt VideoFramesFunction.Arn }
+  DeleteObjectsFunctionArn: { Value: !GetAtt DeleteObjectsFunction.Arn }
+  UploadApiUrl:
+    Description: Base URL for the upload API (POST /upload-url)
+    Value: !Sub https://${UploadApi}.execute-api.${AWS::Region}.amazonaws.com
