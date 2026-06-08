@@ -83,6 +83,12 @@
   const ENDPOINT  = `https://cognito-idp.${REGION}.amazonaws.com/`;
 
   let pendingEmail = '';
+  
+  const prefill = sessionStorage.getItem('ecolens_prefill_email');
+  if (prefill) {
+    document.getElementById('email').value = prefill;
+    sessionStorage.removeItem('ecolens_prefill_email');
+  }
 
   function showMsg(id, text, type) {
     const el = document.getElementById(id);
@@ -128,10 +134,8 @@
         ]
       });
 
-      pendingEmail = email;
-      document.getElementById('email-display').textContent = email;
-      document.getElementById('signup-section').style.display = 'none';
-      document.getElementById('verify-section').style.display = 'block';
+      sessionStorage.setItem('ecolens_prefill_email', email);
+      window.location.href = 'login.html';
 
     } catch (err) {
       showMsg('msg-signup', err.message, 'error');

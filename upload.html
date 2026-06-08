@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AussieEcoLens — Upload</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --green: #2d6a4f; --green-light: #52b788; --cream: #f8f4ec;
+      --bark: #3d2b1f; --mist: #e8f4f0; --error: #c0392b; --success: #27ae60;
+      --border: #ddd; --surface: #fff; --text-muted: #888;
+    }
+    body { min-height: 100vh; background: var(--cream); font-family: 'DM Sans', sans-serif; color: var(--bark); }
+
+    nav { background: var(--green); padding: 0 40px; display: flex; align-items: center; justify-content: space-between; height: 60px; }
+    .nav-brand { font-family: 'DM Serif Display', serif; font-size: 1.4rem; color: #fff; text-decoration: none; }
+    .nav-brand span { color: var(--green-light); }
+    .nav-links { display: flex; gap: 4px; }
+    .nav-links a { color: rgba(255,255,255,0.75); text-decoration: none; padding: 6px 14px; border-radius: 8px; font-size: 14px; transition: background 0.15s; }
+    .nav-links a:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    .nav-links a.active { background: rgba(255,255,255,0.2); color: #fff; }
+    .nav-right { display: flex; align-items: center; gap: 12px; }
+    .nav-user { color: rgba(255,255,255,0.75); font-size: 14px; }
+    .btn-signout { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3); padding: 6px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+    .btn-signout:hover { background: rgba(255,255,255,0.25); }
+
+    main { max-width: 700px; margin: 48px auto; padding: 0 24px; }
+    h1 { font-family: 'DM Serif Display', serif; font-size: 2rem; margin-bottom: 8px; }
+    .subtitle { color: var(--text-muted); margin-bottom: 36px; font-size: 0.95rem; }
+
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: 16px; background: var(--surface);
+      padding: 48px 32px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 24px;
+    }
+    .upload-zone:hover, .upload-zone.dragover { border-color: var(--green); background: var(--mist); }
+    .upload-zone .icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .upload-zone p { color: var(--text-muted); font-size: 0.9rem; margin-top: 8px; }
+    .upload-zone strong { color: var(--bark); }
+    #fileInput { display: none; }
+
+    .preview-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 24px; display: none; }
+    .preview-box img, .preview-box video { max-width: 100%; max-height: 200px; border-radius: 8px; object-fit: contain; display: block; margin: 0 auto 12px; }
+    .file-info { font-size: 0.85rem; color: var(--text-muted); text-align: center; }
+    .checksum { font-family: monospace; font-size: 0.75rem; color: #aaa; margin-top: 4px; word-break: break-all; }
+
+    .btn { width: 100%; padding: 14px; background: var(--green); color: #fff; border: none; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .btn:hover { background: #235c42; }
+    .btn:disabled { background: #aaa; cursor: not-allowed; }
+
+    .message { padding: 12px 16px; border-radius: 8px; font-size: 0.9rem; margin-top: 16px; display: none; }
+    .message.error { background: #fdecea; color: var(--error); border: 1px solid #f5c6c2; display: block; }
+    .message.success { background: #eafaf1; color: var(--success); border: 1px solid #a9dfbf; display: block; }
+    .message.loading { background: #fdf3e3; color: #b8620a; border: 1px solid #f0c97a; display: block; }
+
+    .info-card { background: var(--mist); border-left: 3px solid var(--green); border-radius: 8px; padding: 14px 16px; font-size: 0.85rem; color: #555; line-height: 1.6; margin-bottom: 24px; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-brand" href="index.html">Aussie<span>EcoLens</span></a>
+  <div class="nav-links">
+    <a href="index.html">Dashboard</a>
+    <a href="upload.html" class="active">Upload</a>
+    <a href="query.html">Query</a>
+  </div>
+  <div class="nav-right">
+    <span class="nav-user" id="navEmail"></span>
+    <button class="btn-signout" onclick="doSignOut()">Sign out</button>
+  </div>
+</nav>
+
+<main>
+  <h1>Upload media</h1>
+  <p class="subtitle">Upload images or videos of Australian wildlife. Species are detected automatically.</p>
+
+  <div class="info-card">
+    📋 Supported formats: JPG, PNG, MP4 · Duplicate files are detected automatically using SHA-256 checksum · ML tagging triggers automatically after upload
+  </div>
+
+  <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+    <div class="icon">📂</div>
+    <strong>Click to select a file</strong>
+    <p>or drag and drop here</p>
+    <p style="margin-top:4px;font-size:0.8rem">Images and videos supported</p>
+  </div>
+  <input type="file" id="fileInput" accept="image/*,video/*">
+
+  <div class="preview-box" id="previewBox">
+    <div id="previewMedia"></div>
+    <div class="file-info" id="fileInfo"></div>
+    <div class="checksum" id="checksumDisplay"></div>
+  </div>
+
+  <button class="btn" id="uploadBtn" onclick="doUpload()" disabled>Upload file</button>
+  <div class="message" id="msg"></div>
+</main>
+
+<script>
+  const UPLOAD_API_BASE = 'https://pe8yzy3fo3.execute-api.us-east-1.amazonaws.com';
+
+  const token = sessionStorage.getItem('ecolens_id_token');
+  if (!token) window.location.href = 'login.html';
+
+  const email = sessionStorage.getItem('ecolens_email') || '';
+  document.getElementById('navEmail').textContent = email;
+
+  function doSignOut() { sessionStorage.clear(); window.location.href = 'login.html'; }
+
+  let selectedFile = null;
+  let fileChecksum = null;
+
+  document.getElementById('fileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+  });
+
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  async function handleFile(file) {
+    selectedFile = file;
+    document.getElementById('uploadBtn').disabled = false;
+
+    const box = document.getElementById('previewBox');
+    const media = document.getElementById('previewMedia');
+    const info = document.getElementById('fileInfo');
+    const checksumEl = document.getElementById('checksumDisplay');
+
+    box.style.display = 'block';
+    info.textContent = `${file.name} — ${(file.size / 1024).toFixed(0)} KB`;
+    checksumEl.textContent = 'Computing checksum…';
+
+    if (file.type.startsWith('image/')) {
+      media.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="preview">`;
+    } else if (file.type.startsWith('video/')) {
+      media.innerHTML = `<video src="${URL.createObjectURL(file)}" controls></video>`;
+    } else {
+      media.innerHTML = '<div style="font-size:2rem;text-align:center">📁</div>';
+    }
+
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    fileChecksum = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    checksumEl.textContent = `SHA-256: ${fileChecksum}`;
+  }
+
+  function parseJwt(t) {
+    try { return JSON.parse(atob(t.split('.')[1])); }
+    catch { return {}; }
+  }
+
+  async function doUpload() {
+    if (!selectedFile) return;
+
+    const btn = document.getElementById('uploadBtn');
+    const msg = document.getElementById('msg');
+
+    btn.disabled = true; btn.textContent = 'Uploading…';
+    msg.textContent = 'Getting upload URL…';
+    msg.className = 'message loading';
+
+    try {
+      const ownerSub = parseJwt(token).sub || '';
+
+      // Step 1 — Get presigned URL
+      const res = await fetch(UPLOAD_API_BASE + '/upload-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({
+          filename: selectedFile.name,
+          content_type: selectedFile.type,
+          owner_sub: ownerSub
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        if (res.status === 409 || err.duplicate) {
+          msg.textContent = '⚠ Duplicate file — this file already exists in the system.';
+          msg.className = 'message error';
+          return;
+        }
+        throw new Error(err.error || err.message || 'Failed to get upload URL');
+      }
+
+      const { upload_url, file_id } = await res.json();
+
+      // Step 2 — PUT directly to S3
+      msg.textContent = 'Uploading file to storage…';
+      const putRes = await fetch(upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': selectedFile.type },
+        body: selectedFile
+      });
+
+      if (!putRes.ok) throw new Error('Upload to S3 failed — ' + putRes.status);
+
+      msg.textContent = '✅ Upload successful! ML tagging has been triggered automatically.';
+      msg.className = 'message success';
+      selectedFile = null;
+      fileChecksum = null;
+
+    } catch (e) {
+      msg.textContent = 'Error: ' + e.message;
+      msg.className = 'message error';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Upload file';
+    }
+  }
+</script>
+</body>
+</html>
