@@ -20,6 +20,10 @@ Parameters:
     Type: String
     Default: "267451756103"
     Description: Track 4 AWS account ID (cross-account access for queries + transient uploads)
+  TaggerUrl:
+    Type: String
+    Default: "https://aussie-ecolens-track3-suryashree.azurewebsites.net/api/tag-upload"
+    Description: Track 3 Azure Function endpoint that receives upload-event JSON
 
 Resources:
 
@@ -188,6 +192,7 @@ Resources:
       CodeUri: lambdas/ingest_trigger/
       Handler: app.lambda_handler
       Role: !Ref LabRoleArn
+      Timeout: 120        # extra headroom for Track 3 tagger cold starts
       Environment:
         Variables:
           RAW_BUCKET: !Sub ecolens-raw-${Suffix}
@@ -196,6 +201,7 @@ Resources:
           CHECKSUMS_TABLE: !Ref FileChecksumsTable
           THUMBNAIL_FUNCTION_NAME: !Ref ThumbnailFunction
           VIDEO_FRAMES_FUNCTION_NAME: !Ref VideoFramesFunction
+          TAGGER_URL: !Ref TaggerUrl
 
   IngestTriggerPermission:
     Type: AWS::Lambda::Permission
